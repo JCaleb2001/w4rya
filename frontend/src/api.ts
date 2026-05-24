@@ -1,4 +1,10 @@
-import { createApi, fetchBaseQuery } from "@reduxjs/toolkit/query/react";
+import {
+  createApi,
+  fetchBaseQuery,
+  BaseQueryFn,
+  FetchArgs,
+  FetchBaseQueryError,
+} from "@reduxjs/toolkit/query/react";
 
 import { API_BASE_PATH } from "./const";
 import {
@@ -21,8 +27,29 @@ function base64DecodeUnicode(str: string) : string {
   return new TextDecoder().decode(bytes);
 }
 
+const rawBaseQuery = fetchBaseQuery({
+  baseUrl: API_BASE_PATH,
+  credentials: "include",
+});
+
+// Wrap the base query so that any 401 (session expired / never set) invalidates
+// the cached /me result. RequireAuth subscribes to /me, so it will re-render
+// and redirect to /login.
+const baseQueryWithReauth: BaseQueryFn<
+  string | FetchArgs,
+  unknown,
+  FetchBaseQueryError
+> = async (args, api, extraOptions) => {
+  const result = await rawBaseQuery(args, api, extraOptions);
+  if (result.error && result.error.status === 401) {
+    api.dispatch(w4ryaApi.util.invalidateTags(["Me"]));
+  }
+  return result;
+};
+
 export const w4ryaApi = createApi({
-  baseQuery: fetchBaseQuery({ baseUrl: API_BASE_PATH }),
+  baseQuery: baseQueryWithReauth,
+  tagTypes: ["Me"],
   endpoints: (builder) => ({
     getServices: builder.query<Service[], void>({
       query: () => "/services",
@@ -189,6 +216,18 @@ export const w4ryaApi = createApi({
         }
       },
     }),
+    getMe: builder.query<{ user: string | null }, void>({
+      query: () => "/me",
+      providesTags: ["Me"],
+    }),
+    login: builder.mutation<{ user: string }, { username: string; password: string }>({
+      query: (body) => ({ url: "/login", method: "POST", body }),
+      invalidatesTags: ["Me"],
+    }),
+    logout: builder.mutation<{ ok: boolean }, void>({
+      query: () => ({ url: "/logout", method: "POST" }),
+      invalidatesTags: ["Me"],
+    }),
   }),
 });
 
@@ -206,4 +245,7 @@ export const {
   useStarFlowMutation,
   useGetStatsQuery,
   useGetUnderAttackQuery,
+  useGetMeQuery,
+  useLoginMutation,
+  useLogoutMutation,
 } = w4ryaApi;

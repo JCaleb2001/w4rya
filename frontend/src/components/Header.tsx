@@ -22,6 +22,8 @@ import {
 import {
   useGetFlowQuery,
   useGetServicesQuery,
+  useGetMeQuery,
+  useLogoutMutation,
 } from "../api";
 import { getTickStuff } from "../tick";
 
@@ -245,6 +247,28 @@ function Diff() {
   );
 }
 
+function UserMenu() {
+  const { data: me } = useGetMeQuery();
+  const [logout, { isLoading }] = useLogoutMutation();
+  if (!me?.user) return null;
+  return (
+    <div className="flex items-center gap-2 font-mono">
+      <div className="text-xs uppercase tracking-[0.15em]">
+        <span className="text-hax-muted">user</span>{" "}
+        <span className="text-hax-accent-bright">{me.user}</span>
+      </div>
+      <button
+        className="hax-btn"
+        disabled={isLoading}
+        onClick={() => logout()}
+        title="Logout"
+      >
+        {isLoading ? "…" : "logout"}
+      </button>
+    </div>
+  );
+}
+
 export function Header() {
   let { currentTick, setToLastnTicks, setTimeParam } = getTickStuff();
   let [searchParams] = useSearchParams();
@@ -320,6 +344,9 @@ export function Header() {
           <span className="text-hax-accent-bright hax-glow text-lg leading-tight">
             {currentTick}
           </span>
+        </div>
+        <div className="ml-4 mr-2 self-center">
+          <UserMenu />
         </div>
       </div>
     </>
