@@ -24,6 +24,7 @@ import {
   useGetServicesQuery,
   useGetMeQuery,
   useLogoutMutation,
+  hasRole,
 } from "../api";
 import { getTickStuff } from "../tick";
 
@@ -211,11 +212,20 @@ function UserMenu() {
   const { data: me } = useGetMeQuery();
   const [logout, { isLoading }] = useLogoutMutation();
   if (!me?.user) return null;
+  const roleColor =
+    me.role === "admin"
+      ? "text-hax-danger"
+      : me.role === "operator"
+      ? "text-hax-warning"
+      : "text-hax-muted";
   return (
     <div className="flex items-center gap-2 font-mono">
       <div className="text-xs uppercase tracking-[0.15em]">
         <span className="text-hax-muted">user</span>{" "}
         <span className="text-hax-accent-bright">{me.user}</span>
+        <span className={`ml-1 ${roleColor}`} title={`role: ${me.role}`}>
+          [{me.role ?? "?"}]
+        </span>
       </div>
       <button
         className="hax-btn"
@@ -274,6 +284,11 @@ export function Header() {
           Graph view
         </div>
       </Link>
+      <Link to="/attacks">
+        <div className="hax-btn">
+          Attacks
+        </div>
+      </Link>
       <Link to="/config">
         <div className="hax-btn">
           Config
@@ -284,6 +299,13 @@ export function Header() {
           Rules
         </div>
       </Link>
+      {hasRole(useGetMeQuery().data?.role, "admin") && (
+        <Link to="/audit">
+          <div className="hax-btn">
+            Audit
+          </div>
+        </Link>
+      )}
       <div className="ml-auto mr-4" style={{ display: "flex" }}>
         <div className="mr-4">
           <FirstDiff />

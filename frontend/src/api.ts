@@ -219,11 +219,11 @@ export const w4ryaApi = createApi({
         }
       },
     }),
-    getMe: builder.query<{ user: string | null }, void>({
+    getMe: builder.query<{ user: string | null; role?: Role }, void>({
       query: () => "/me",
       providesTags: ["Me"],
     }),
-    login: builder.mutation<{ user: string }, { username: string; password: string }>({
+    login: builder.mutation<{ user: string; role: Role }, { username: string; password: string }>({
       query: (body) => ({ url: "/login", method: "POST", body }),
       invalidatesTags: ["Me"],
     }),
@@ -308,6 +308,20 @@ export const w4ryaApi = createApi({
     getServicesStats: builder.query<ServicesStatsPayload, number | void>({
       query: (ticks) => `/services/stats?ticks=${ticks ?? 5}`,
       providesTags: ["Services"],
+    }),
+    getAttacks: builder.query<AttacksPayload, AttacksQuery>({
+      query: (q) => {
+        const sp = new URLSearchParams();
+        if (q?.from_tick !== undefined) sp.set("from_tick", String(q.from_tick));
+        if (q?.to_tick !== undefined) sp.set("to_tick", String(q.to_tick));
+        if (q?.service) sp.set("service", q.service);
+        if (q?.limit !== undefined) sp.set("limit", String(q.limit));
+        const qs = sp.toString();
+        return `/attacks${qs ? "?" + qs : ""}`;
+      },
+    }),
+    getAudit: builder.query<AuditPayload, number | void>({
+      query: (limit) => `/audit?limit=${limit ?? 200}`,
     }),
 
     // --- notes per flow ---
@@ -434,12 +448,72 @@ export interface ServicesStatsPayload {
   services: ServiceStats[];
 }
 
+export interface AttackRule {
+  id: number;
+  message: string;
+  action: string;
+}
+
+export interface AttackEvent {
+  flow_id: string;
+  time: string;
+  src_ip: string;
+  src_port: number;
+  dst_ip: string;
+  dst_port: number;
+  service: string;
+  type: "alert" | "flag_out" | "both";
+  rules: AttackRule[];
+  flag_out_count: number;
+}
+
+export interface AttacksQuery {
+  from_tick?: number;
+  to_tick?: number;
+  service?: string;
+  limit?: number;
+}
+
+export interface AttacksPayload {
+  from_tick: number;
+  to_tick: number;
+  current_tick: number;
+  tick_length_ms: number;
+  service: string | null;
+  limit: number;
+  count: number;
+  events: AttackEvent[];
+}
+
 export interface Note {
   id: string;
   flow_id: string;
   author: string;
   body: string;
   created_at: string;
+}
+
+export type Role = "viewer" | "operator" | "admin";
+
+const ROLE_RANK: Record<Role, number> = { viewer: 0, operator: 1, admin: 2 };
+
+export function hasRole(actual: Role | undefined, min: Role): boolean {
+  if (!actual) return false;
+  return ROLE_RANK[actual] >= ROLE_RANK[min];
+}
+
+export interface AuditEvent {
+  id: string;
+  when: string;
+  actor: string;
+  action: string;
+  target: string | null;
+  details: Record<string, unknown> | null;
+}
+
+export interface AuditPayload {
+  count: number;
+  events: AuditEvent[];
 }
 
 export const {
@@ -474,6 +548,8 @@ export const {
   useBlockIpMutation,
   useReloadRulesMutation,
   useGetServicesStatsQuery,
+  useGetAttacksQuery,
+  useGetAuditQuery,
   useGetNotesQuery,
   useAddNoteMutation,
   useDeleteNoteMutation,

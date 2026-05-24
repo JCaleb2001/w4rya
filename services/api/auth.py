@@ -21,6 +21,14 @@ USERS_FILE = os.environ.get("W4RYA_USERS_FILE", "/app/auth/users.yaml")
 # the "not logged in" signal.
 PUBLIC_PATHS = {"/", "/login", "/logout"}
 
+# Role rank: higher number = more permissions. Decorator compares
+# ROLE_RANK[user_role] >= ROLE_RANK[required_role].
+ROLE_RANK: dict[str, int] = {"viewer": 0, "operator": 1, "admin": 2}
+DEFAULT_ROLE_NEW_USER = "viewer"
+# Backward compat: an existing users.yaml entry without a `role` field is
+# treated as admin so the bootstrap user keeps full access.
+LEGACY_ROLE = "admin"
+
 _users_cache: Optional[dict] = None
 _users_mtime: Optional[float] = None
 
@@ -63,6 +71,22 @@ def current_user() -> Optional[str]:
     return session.get("user")
 
 
+def current_role() -> str:
+    """Role of the currently authed user. 'viewer' if unauthed."""
+    user = current_user()
+    if not user:
+        return "viewer"
+    record = _load_users().get(user) or {}
+    role = (record.get("role") or LEGACY_ROLE).strip()
+    if role not in ROLE_RANK:
+        role = "viewer"
+    return role
+
+
+def has_role(min_role: str) -> bool:
+    return ROLE_RANK.get(current_role(), 0) >= ROLE_RANK.get(min_role, 99)
+
+
 def require_auth():
     """Flask before_request hook. Return a 401 response if blocked, else None."""
     if request.method == "OPTIONS":
@@ -82,3 +106,21 @@ def login_required(fn):
             return jsonify({"error": "unauthorized"}), 401
         return fn(*args, **kwargs)
     return wrapper
+
+
+def requires_role(min_role: str):
+    """Reject the request with 403 if the session user lacks `min_role`."""
+    def deco(fn):
+        @wraps(fn)
+        def wrapper(*args, **kwargs):
+            if current_user() is None:
+                return jsonify({"error": "unauthorized"}), 401
+            if not has_role(min_role):
+                return jsonify({
+                    "error": "forbidden",
+                    "required_role": min_role,
+                    "your_role": current_role(),
+                }), 403
+            return fn(*args, **kwargs)
+        return wrapper
+    return deco

@@ -18,6 +18,8 @@ import { Corrie } from "./components/Corrie";
 import { Login } from "./pages/Login";
 import { Config } from "./pages/Config";
 import { Rules } from "./pages/Rules";
+import { Attacks } from "./pages/Attacks";
+import { Audit } from "./pages/Audit";
 import { useGetMeQuery } from "./api";
 import { Toasts } from "./components/Toasts";
 import { FlagLeakWatcher } from "./components/FlagLeakWatcher";
@@ -89,6 +91,22 @@ function App() {
             element={
               <Suspense>
                 <Rules />
+              </Suspense>
+            }
+          />
+          <Route
+            path="attacks"
+            element={
+              <Suspense>
+                <Attacks />
+              </Suspense>
+            }
+          />
+          <Route
+            path="audit"
+            element={
+              <Suspense>
+                <Audit />
               </Suspense>
             }
           />

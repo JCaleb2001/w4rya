@@ -368,6 +368,81 @@ class Connection(psycopg.Connection):
             tags = cursor.execute("SELECT name FROM tag ORDER BY sort ASC").fetchall()
             return [t["name"] for t in tags]
 
+    def attack_timeline(
+        self,
+        time_from: datetime,
+        time_to: datetime,
+        services: list[dict],
+        service_filter: str | None = None,
+        limit: int = 200,
+    ) -> list[dict]:
+        """Chronological list of attack-flavored events in the time window.
+
+        An 'event' is any flow that either matched a Suricata signature OR
+        leaked a flag (tag = flag-out). For each event we resolve the dst
+        (ip, port) to the configured service name.
+        """
+        sql_query = """
+            SELECT id, time,
+                   ip_src::text AS ip_src,
+                   ip_dst::text AS ip_dst,
+                   port_src, port_dst,
+                   flags_out, signatures, tags
+            FROM flow
+            WHERE (jsonb_array_length(signatures) > 0 OR tags ? 'flag-out')
+              AND id > fid_pack_low(%(t0)s)
+              AND id < fid_pack_high(%(t1)s)
+            ORDER BY time DESC
+            LIMIT %(limit)s
+        """
+        with self.cursor(row_factory=dict_row) as cursor:
+            rows = cursor.execute(
+                sql_query,
+                {"t0": time_from, "t1": time_to, "limit": limit},
+            ).fetchall()
+
+        svc_by_key = {
+            (str(s.get("ip", "")), int(s.get("port", -1) or 0)): s.get("name", "?")
+            for s in services
+        }
+        out: list[dict] = []
+        for r in rows:
+            ip_dst = str(r["ip_dst"]).split("/", 1)[0]
+            ip_src = str(r["ip_src"]).split("/", 1)[0]
+            svc_name = svc_by_key.get((ip_dst, int(r["port_dst"])), "unknown")
+            if service_filter and svc_name != service_filter:
+                continue
+            sigs = r.get("signatures") or []
+            tags = r.get("tags") or []
+            has_flag = "flag-out" in tags
+            has_alert = bool(sigs)
+            if has_alert and has_flag:
+                ev_type = "both"
+            elif has_alert:
+                ev_type = "alert"
+            else:
+                ev_type = "flag_out"
+            out.append({
+                "flow_id": str(r["id"]),
+                "time": r["time"].isoformat(),
+                "src_ip": ip_src,
+                "src_port": int(r["port_src"]),
+                "dst_ip": ip_dst,
+                "dst_port": int(r["port_dst"]),
+                "service": svc_name,
+                "type": ev_type,
+                "rules": [
+                    {
+                        "id": s.get("id"),
+                        "message": s.get("message"),
+                        "action": s.get("action"),
+                    }
+                    for s in sigs
+                ],
+                "flag_out_count": int(r["flags_out"] or 0) if has_flag else 0,
+            })
+        return out
+
     def per_service_stats(self, time_start: datetime, services: list[dict]) -> list[dict]:
         """Aggregate flow / attack / flag counts for each configured service.
 

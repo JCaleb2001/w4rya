@@ -53,6 +53,7 @@ import database, json_util
 import auth
 import app_config
 import attack
+import audit
 import notes
 import rules
 import suricata_ctl
@@ -103,22 +104,30 @@ def login():
     if not username or not password:
         return jsonify({"error": "username and password required"}), 400
     if not auth.verify_password(username, password):
+        audit.log(username or "?", "auth.login_fail")
         return jsonify({"error": "invalid credentials"}), 401
     session.clear()
     session["user"] = username
     session.permanent = True
-    return jsonify({"user": username})
+    audit.log(username, "auth.login", details={"role": auth.current_role()})
+    return jsonify({"user": username, "role": auth.current_role()})
 
 
 @application.route("/logout", methods=["POST"])
 def logout():
+    who = auth.current_user()
     session.clear()
+    if who:
+        audit.log(who, "auth.logout")
     return jsonify({"ok": True})
 
 
 @application.route("/me")
 def me():
-    return jsonify({"user": auth.current_user()})
+    return jsonify({
+        "user": auth.current_user(),
+        "role": auth.current_role(),
+    })
 
 
 @application.route("/tick_info")
@@ -239,6 +248,7 @@ def getTags():
 
 
 @application.route("/star", methods=["POST"])
+@auth.requires_role("operator")
 def setStar():
     query = request.get_json()
     flow_id = uuid.UUID(query.get("id"))
@@ -251,6 +261,58 @@ def setStar():
 @application.route("/services")
 def getServices():
     return return_json_response(app_config.get("services"))
+
+
+@application.route("/attacks")
+def attacks_timeline():
+    """Chronological attack events (Suricata alerts + flag leaks).
+
+    Filters: ?from_tick=N&to_tick=M&service=NAME&limit=K. All optional.
+    Default window = last 10 ticks.
+    """
+    try:
+        from_tick = request.args.get("from_tick", type=int)
+        to_tick = request.args.get("to_tick", type=int)
+        limit = int(request.args.get("limit", 200) or 200)
+    except (TypeError, ValueError):
+        return jsonify({"error": "bad numeric query param"}), 400
+    limit = max(10, min(500, limit))
+    service_filter = (request.args.get("service") or "").strip() or None
+
+    tick_length_ms = int(app_config.get("tick_length") or 180000)
+    try:
+        tick_first = dateutil.parser.parse(app_config.get("start_date"))
+    except (TypeError, ValueError):
+        return jsonify({"error": "invalid start_date in config"}), 500
+    tick_length = timedelta(milliseconds=tick_length_ms)
+    now = datetime.now(tz=timezone.utc)
+    current_tick = int(((now - tick_first) // tick_length) + 1)
+    if from_tick is None:
+        from_tick = max(0, current_tick - 10)
+    if to_tick is None:
+        to_tick = current_tick + 1
+    if to_tick <= from_tick:
+        to_tick = from_tick + 1
+
+    time_from = tick_first + (from_tick * tick_length)
+    time_to = tick_first + (to_tick * tick_length)
+    services_cfg = app_config.get("services") or []
+
+    with db.connection() as c:
+        events = c.attack_timeline(
+            time_from, time_to, services_cfg, service_filter, limit
+        )
+
+    return return_json_response({
+        "from_tick": from_tick,
+        "to_tick": to_tick,
+        "current_tick": current_tick,
+        "tick_length_ms": tick_length_ms,
+        "service": service_filter,
+        "limit": limit,
+        "count": len(events),
+        "events": events,
+    })
 
 
 @application.route("/services/stats")
@@ -294,11 +356,13 @@ def getConfig():
 
 
 @application.route("/config", methods=["PUT"])
+@auth.requires_role("admin")
 def putConfig():
     data = request.get_json(silent=True) or {}
     if not isinstance(data, dict):
         return jsonify({"error": "expected an object"}), 400
     errors = {}
+    applied: list[str] = []
     for key, raw in data.items():
         if key not in app_config.SCALAR_KEYS:
             errors[key] = "unknown key"
@@ -309,8 +373,10 @@ def putConfig():
             errors[key] = str(e)
             continue
         app_config.set(key, value)
+        applied.append(key)
     if errors:
         return jsonify({"error": "invalid fields", "fields": errors}), 400
+    audit.log(auth.current_user() or "?", "config.set", details={"keys": applied})
     return return_json_response(_config_payload())
 
 
@@ -320,6 +386,7 @@ def getConfigServices():
 
 
 @application.route("/config/services", methods=["PUT"])
+@auth.requires_role("admin")
 def putConfigServices():
     data = request.get_json(silent=True)
     if not isinstance(data, list):
@@ -329,6 +396,7 @@ def putConfigServices():
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
     app_config.set("services", validated)
+    audit.log(auth.current_user() or "?", "config.services", details={"count": len(validated)})
     return return_json_response(validated)
 
 
@@ -338,6 +406,7 @@ def getConfigTeams():
 
 
 @application.route("/config/teams", methods=["PUT"])
+@auth.requires_role("admin")
 def putConfigTeams():
     data = request.get_json(silent=True)
     if not isinstance(data, list):
@@ -347,6 +416,7 @@ def putConfigTeams():
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
     app_config.set("teams", validated)
+    audit.log(auth.current_user() or "?", "config.teams", details={"count": len(validated)})
     return return_json_response(validated)
 
 
@@ -376,6 +446,7 @@ def attack_preview(flow_id):
 
 
 @application.route("/attack/replay", methods=["POST"])
+@auth.requires_role("operator")
 def attack_replay():
     body = request.get_json(silent=True) or {}
     raw_flow_id = body.get("flow_id") or ""
@@ -410,7 +481,27 @@ def attack_replay():
         return jsonify({"error": "flow not found"}), 404
 
     result = attack.replay(flow, targets, timeout=timeout)
+    audit.log(
+        auth.current_user() or "?",
+        "attack.replay",
+        target=raw_flow_id,
+        details={"target_count": len(targets), "timeout": timeout},
+    )
     return return_json_response(result)
+
+
+# --- /audit (admin-only log) -----------------------------------------------
+
+@application.route("/audit")
+@auth.requires_role("admin")
+def audit_recent():
+    try:
+        limit = int(request.args.get("limit", 200))
+    except ValueError:
+        limit = 200
+    limit = max(10, min(1000, limit))
+    rows = audit.recent(limit=limit)
+    return return_json_response({"count": len(rows), "events": rows})
 
 
 # --- /flow/<id>/notes ------------------------------------------------------
@@ -495,6 +586,7 @@ def list_rules():
 
 
 @application.route("/rules", methods=["POST"])
+@auth.requires_role("operator")
 def add_rule():
     body = request.get_json(silent=True) or {}
     raw = (body.get("raw") or "").strip()
@@ -505,6 +597,7 @@ def add_rule():
         rule = rules.add(raw, enabled=enabled)
     except (ValueError, OSError) as e:
         return jsonify({"error": str(e)}), 400
+    audit.log(auth.current_user() or "?", "rules.add", target=str(rule.sid))
     result = rule.to_dict()
     reload = _maybe_autoreload()
     if reload is not None:
@@ -513,6 +606,7 @@ def add_rule():
 
 
 @application.route("/rules/<int:sid>", methods=["PUT"])
+@auth.requires_role("operator")
 def update_rule(sid: int):
     body = request.get_json(silent=True) or {}
     raw = body.get("raw")
@@ -527,6 +621,12 @@ def update_rule(sid: int):
         return jsonify({"error": str(e)}), 400
     if not rule:
         return jsonify({"error": "rule not found"}), 404
+    audit.log(
+        auth.current_user() or "?",
+        "rules.update",
+        target=str(sid),
+        details={"enabled": rule.enabled, "raw_set": raw is not None},
+    )
     result = rule.to_dict()
     reload = _maybe_autoreload()
     if reload is not None:
@@ -535,6 +635,7 @@ def update_rule(sid: int):
 
 
 @application.route("/rules/<int:sid>", methods=["DELETE"])
+@auth.requires_role("operator")
 def delete_rule(sid: int):
     try:
         ok = rules.delete(sid)
@@ -542,6 +643,7 @@ def delete_rule(sid: int):
         return jsonify({"error": str(e)}), 500
     if not ok:
         return jsonify({"error": "rule not found"}), 404
+    audit.log(auth.current_user() or "?", "rules.delete", target=str(sid))
     out: dict = {"ok": True}
     reload = _maybe_autoreload()
     if reload is not None:
@@ -550,6 +652,7 @@ def delete_rule(sid: int):
 
 
 @application.route("/rules/block-ip", methods=["POST"])
+@auth.requires_role("operator")
 def rules_block_ip():
     body = request.get_json(silent=True) or {}
     ip = (body.get("ip") or "").strip()
@@ -559,6 +662,7 @@ def rules_block_ip():
         rule = rules.block_ip(ip)
     except (ValueError, OSError) as e:
         return jsonify({"error": str(e)}), 400
+    audit.log(auth.current_user() or "?", "rules.block_ip", target=ip, details={"sid": rule.sid})
     result = rule.to_dict()
     reload = _maybe_autoreload()
     if reload is not None:
@@ -567,6 +671,7 @@ def rules_block_ip():
 
 
 @application.route("/rules/reload", methods=["POST"])
+@auth.requires_role("operator")
 def reload_rules_route():
     try:
         result = suricata_ctl.reload_rules()
@@ -574,6 +679,7 @@ def reload_rules_route():
         return jsonify({"error": str(e), "kind": "socket_missing"}), 503
     except (OSError, ValueError) as e:
         return jsonify({"error": f"{type(e).__name__}: {e}", "kind": "socket_error"}), 502
+    audit.log(auth.current_user() or "?", "suricata.reload")
     return jsonify(result)
 
 
@@ -735,6 +841,8 @@ def create_app():
     app_config.init_schema()
     notes.set_pool(db)
     notes.init_schema()
+    audit.set_pool(db)
+    audit.init_schema()
     return application
 
 if __name__ == "__main__":

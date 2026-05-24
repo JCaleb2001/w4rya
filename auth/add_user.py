@@ -9,6 +9,7 @@ Inside the api container the path defaults to /app/auth/users.yaml.
 On the host it defaults to the auth/users.yaml next to this script.
 """
 
+import argparse
 import getpass
 import os
 import re
@@ -23,21 +24,26 @@ DEFAULT_PATH = os.environ.get(
 )
 
 USERNAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,32}$")
+VALID_ROLES = ("viewer", "operator", "admin")
 
 
 def main() -> int:
-    if len(sys.argv) < 2:
-        print("usage: add_user.py <username> [users.yaml path]", file=sys.stderr)
-        return 2
+    parser = argparse.ArgumentParser(description="Add or update a w4rya user.")
+    parser.add_argument("username")
+    parser.add_argument(
+        "--role",
+        default="viewer",
+        choices=VALID_ROLES,
+        help="permission tier (default: viewer)",
+    )
+    parser.add_argument("--path", default=DEFAULT_PATH, help="users.yaml path")
+    args = parser.parse_args()
 
-    username = sys.argv[1]
-    path = sys.argv[2] if len(sys.argv) > 2 else DEFAULT_PATH
-
-    if not USERNAME_RE.match(username):
+    if not USERNAME_RE.match(args.username):
         print("username must match [A-Za-z0-9_-]{1,32}", file=sys.stderr)
         return 2
 
-    password = getpass.getpass(f"password for {username}: ")
+    password = getpass.getpass(f"password for {args.username}: ")
     confirm = getpass.getpass("confirm:                ")
     if password != confirm:
         print("passwords don't match", file=sys.stderr)
@@ -49,21 +55,24 @@ def main() -> int:
     hashed = bcrypt.hashpw(password.encode(), bcrypt.gensalt(12)).decode()
 
     data: dict = {}
-    if os.path.exists(path):
-        with open(path) as f:
+    if os.path.exists(args.path):
+        with open(args.path) as f:
             data = yaml.safe_load(f) or {}
 
     users = data.setdefault("users", {}) or {}
-    if username in users:
-        print(f"note: user '{username}' already exists; overwriting hash", file=sys.stderr)
-    users[username] = {"password_hash": hashed}
+    if args.username in users:
+        print(
+            f"note: user '{args.username}' already exists; overwriting hash + role",
+            file=sys.stderr,
+        )
+    users[args.username] = {"password_hash": hashed, "role": args.role}
     data["users"] = users
 
-    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
-    with open(path, "w") as f:
+    os.makedirs(os.path.dirname(args.path) or ".", exist_ok=True)
+    with open(args.path, "w") as f:
         yaml.safe_dump(data, f, default_flow_style=False, sort_keys=True)
 
-    print(f"wrote {path} ({len(users)} user(s) total)")
+    print(f"wrote {args.path} — user '{args.username}' role={args.role} ({len(users)} user(s) total)")
     print("next: docker compose restart api")
     return 0
 
