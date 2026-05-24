@@ -53,8 +53,10 @@ export interface Signature {
 export interface FlowsQuery {
   // Text filter
   regex_insensitive?: string;
-  // Service filter
-  // TODO: Why not use service name here?
+  // Multi-service filter: server-side OR. Names resolved against the runtime
+  // services config (DB-backed via /config/services).
+  service_names?: string[];
+  // Legacy single-service filter (still supported by backend, used by Corrie).
   service?: string;
   ip_dst?: string;
   port_dst?: number;

@@ -133,3 +133,13 @@ workspace.xml
 
 /traffic
 suricata
+
+# auth: bcrypt password hashes — never commit
+/auth/users.yaml
+
+# suricata rules — local team operational state, not committed
+/suricata-rules/*.rules
+
+# suricata runtime: command socket + pidfile, both runtime-only
+/suricata-run/*
+!/suricata-run/.gitkeep

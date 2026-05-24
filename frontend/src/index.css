@@ -1,5 +1,88 @@
-@import url('https://fonts.googleapis.com/css2?family=Recursive:wght,MONO@300..800,0..1&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Recursive:wght,MONO@300..800,0..1&display=swap');
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+:root {
+  color-scheme: dark;
+  --hax-bg: #0a0a0f;
+  --hax-surface: #13131c;
+  --hax-elev: #1c1c28;
+  --hax-border: #2a2a3a;
+  --hax-text: #e4e4ed;
+  --hax-muted: #8888a0;
+  --hax-accent: #a855f7;
+  --hax-accent-bright: #c084fc;
+  --hax-accent-deep: #7e22ce;
+}
+
+html, body, #root {
+  background: var(--hax-bg);
+  color: var(--hax-text);
+  font-family: 'JetBrains Mono', 'Recursive', ui-monospace, SFMono-Regular, monospace;
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background: var(--hax-accent-deep);
+  color: var(--hax-text);
+}
+
+/* Scrollbars: keep them in the theme */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: var(--hax-bg);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--hax-border);
+  border: 2px solid var(--hax-bg);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--hax-accent-deep);
+}
+
+/* Inputs default style — overridable per-element */
+input, select, textarea {
+  background: var(--hax-elev);
+  color: var(--hax-text);
+  border: 1px solid var(--hax-border);
+  border-radius: 4px;
+  padding: 4px 8px;
+  outline: none;
+  transition: border-color 120ms, box-shadow 120ms;
+}
+input:focus, select:focus, textarea:focus {
+  border-color: var(--hax-accent);
+  box-shadow: 0 0 0 1px var(--hax-accent), 0 0 12px -2px var(--hax-accent);
+}
+input::placeholder {
+  color: var(--hax-muted);
+}
+
+button {
+  outline: none;
+}
+button:focus-visible {
+  box-shadow: 0 0 0 2px var(--hax-accent);
+}
+
+/* Subtle scanline texture on the body for that CRT vibe; very low opacity */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 9999;
+  background: repeating-linear-gradient(
+    0deg,
+    rgba(168, 85, 247, 0.015) 0px,
+    rgba(168, 85, 247, 0.015) 1px,
+    transparent 1px,
+    transparent 3px
+  );
+}

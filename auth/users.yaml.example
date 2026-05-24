@@ -1,0 +1,18 @@
+# w4rya users — bcrypt password hashes
+#
+# This file is loaded by services/api/auth.py at request time (mtime-cached).
+# Real users go in `auth/users.yaml` — that file is gitignored, do NOT commit it.
+#
+# Add a user (preferred — runs inside the api container so deps are already there):
+#   docker compose run --rm api python /app/auth/add_user.py <username>
+#
+# Or, if you have bcrypt + PyYAML on the host:
+#   python3 auth/add_user.py <username>
+#
+# After editing users.yaml: restart the api container so the cache picks it up
+# (the mtime cache will also pick it up on next request, but a restart is safer):
+#   docker compose restart api
+
+users:
+  # caleb:
+  #   password_hash: "$2b$12$replaceWithRealBcryptHash................................"

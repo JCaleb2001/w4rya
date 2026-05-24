@@ -7,11 +7,21 @@
     }
 
     li {
-        @apply bg-gray-100 p-2 focus:ring-4 border-t border-gray-200 list-none;
+        @apply bg-hax-surface text-hax-text p-2 list-none;
+        border-top: 1px solid var(--hax-border);
+        transition: background 120ms, border-color 120ms;
+    }
+
+    li:hover {
+        @apply bg-hax-elev;
     }
 
     li.active {
-        @apply border-y border-l-4 border-gray-500 bg-gray-300/50
+        background: linear-gradient(90deg, rgba(168,85,247,0.18) 0%, rgba(168,85,247,0.04) 100%);
+        border-top: 1px solid var(--hax-accent);
+        border-bottom: 1px solid var(--hax-accent);
+        border-left: 3px solid var(--hax-accent);
+        box-shadow: inset 0 0 14px -6px rgba(168,85,247,0.35);
     }
 
 }

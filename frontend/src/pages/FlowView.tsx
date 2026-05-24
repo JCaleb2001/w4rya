@@ -24,6 +24,9 @@ import { format } from "date-fns";
 import { hexy } from "hexy";
 import { useCopy } from "../hooks/useCopy";
 import { RadioGroup } from "../components/RadioGroup";
+import { ExploitModal } from "../components/ExploitModal";
+import { NotesPanel } from "../components/NotesPanel";
+import { useBlockIpMutation } from "../api";
 import {
   useGetFlowQuery,
   useGetServicesQuery,
@@ -45,7 +48,7 @@ function CopyButton({ copyText }: { copyText?: string }) {
     <>
       {copyText && (
         <button
-          className="p-2 text-sm text-blue-500"
+          className="p-2 text-xs uppercase tracking-wider text-hax-accent-bright hover:text-hax-accent hover:hax-glow font-mono"
           onClick={copy}
           disabled={!copyText}
         >
@@ -82,8 +85,8 @@ function highlightText(flowText: string, search_string: string, flag_string: str
     return flowText
   }
   try {
-    const searchClasses = "bg-orange-200 rounded-sm";
-    const flagClasses = "bg-red-200 rounded-sm";
+    const searchClasses = "bg-hax-accent/30 text-hax-accent-bright rounded-sm px-0.5";
+    const flagClasses = "bg-hax-danger/30 text-red-300 rounded-sm px-0.5 font-bold";
 
     // Matches are stored as `[start index, end index]`.
     // For some reason tsc compiler (during build) thinks that `x.index` can be undefined (no, it can't).
@@ -173,7 +176,7 @@ function WebFlow({ flow }: { flow: FlowData }) {
   return (
     <FlowContainer>
       <pre>{header}</pre>
-      <div className="border border-gray-200 rounded-lg">
+      <div className="border border-hax-border rounded-sm bg-hax-surface">
         <Hack
           srcDoc={http_content}
           sandbox=""
@@ -247,23 +250,23 @@ function Flow({ full_flow, flow, flow_item_index, delta_time, id }: FlowProps) {
   return (
     <div className="text-mono" id={id}>
       <div
-        className="sticky shadow-md bg-white overflow-auto py-1 border-y"
+        className="sticky shadow-md bg-hax-surface overflow-auto py-1 border-y border-hax-border"
         style={{ top: SECONDARY_NAVBAR_HEIGHT }}
       >
-        <div className="flex items-center h-6">
-          <div className="w-8 px-2">
+        <div className="flex items-center h-7 gap-2 px-2">
+          <div className="w-6">
             {flow.from === "s" ? (
-              <ArrowCircleLeftIcon className="fill-green-700" />
+              <ArrowCircleLeftIcon className="fill-hax-success" />
             ) : (
-              <ArrowCircleRightIcon className="fill-red-700" />
+              <ArrowCircleRightIcon className="fill-hax-danger" />
             )}
           </div>
-          <div style={{ width: 200 }}>
-            {formatted_time}
-            <span className="text-gray-400 pl-3">{delta_time}ms</span>
+          <div className="font-mono text-xs" style={{ width: 200 }}>
+            <span className="text-hax-text">{formatted_time}</span>
+            <span className="text-hax-muted pl-3">+{delta_time}ms</span>
           </div>
           <button
-            className="bg-gray-200 py-1 px-2 rounded-md text-sm"
+            className="hax-btn"
             onClick={async () => {
               window.open(
                 "https://gchq.github.io/CyberChef/#input=" +
@@ -275,7 +278,7 @@ function Flow({ full_flow, flow, flow_item_index, delta_time, id }: FlowProps) {
           </button>
           {flowType == "Web" && flowBody && (
             <button
-              className="bg-gray-200 py-1 px-2 rounded-md text-sm ml-2"
+              className="hax-btn"
               onClick={async () => {
                 window.open(
                   "https://gchq.github.io/CyberChef/#input=" +
@@ -287,7 +290,7 @@ function Flow({ full_flow, flow, flow_item_index, delta_time, id }: FlowProps) {
             </button>
           )}
           <button
-            className="bg-gray-200 py-1 px-2 rounded-md text-sm ml-2"
+            className="hax-btn"
             onClick={async () => {
               const blob = new Blob([Buffer.from(flow.b64, "base64")], {
                 type: "application/octet-stream",
@@ -296,7 +299,7 @@ function Flow({ full_flow, flow, flow_item_index, delta_time, id }: FlowProps) {
               const a = document.createElement("a");
               a.style.display = "none";
               a.href = url;
-              a.download = "tulip-dl-" + id + ".dat";
+              a.download = "w4rya-dl-" + id + ".dat";
               document.body.appendChild(a);
               a.click();
               window.URL.revokeObjectURL(url);
@@ -307,7 +310,7 @@ function Flow({ full_flow, flow, flow_item_index, delta_time, id }: FlowProps) {
           </button>
           {flowType == "Web" && flowBody && (
             <button
-              className="bg-gray-200 py-1 px-2 rounded-md text-sm ml-2"
+              className="hax-btn"
               onClick={async () => {
                 const blob = new Blob([flowBody[1]], {
                   type: flowBody[0].toString(),
@@ -316,7 +319,7 @@ function Flow({ full_flow, flow, flow_item_index, delta_time, id }: FlowProps) {
                 const a = document.createElement("a");
                 a.style.display = "none";
                 a.href = url;
-                a.download = "tulip-dl-" + id + ".dat";
+                a.download = "w4rya-dl-" + id + ".dat";
                 document.body.appendChild(a);
                 a.click();
                 window.URL.revokeObjectURL(url);
@@ -330,15 +333,15 @@ function Flow({ full_flow, flow, flow_item_index, delta_time, id }: FlowProps) {
             options={displayOptions}
             value={displayOption}
             onChange={setDisplayOption}
-            className="flex gap-2 text-gray-800 text-sm mr-4 ml-auto"
+            className="flex gap-1.5 mr-4 ml-auto"
           />
         </div>
       </div>
       <div
         className={
           flow.from === "s"
-            ? "border-l-8 border-green-300"
-            : "border-l-8 border-red-300"
+            ? "border-l-4 border-hax-success/60 bg-hax-surface/40"
+            : "border-l-4 border-hax-danger/60 bg-hax-surface/40"
         }
       >
         {displayOption === "Hex" && <HexFlow flow={flow}></HexFlow>}
@@ -362,6 +365,32 @@ function formatIP(ip: string) {
   return ip.includes(":") ? `[${ip}]` : ip;
 }
 
+function BlockIpButton({ ip }: { ip: string }) {
+  const [block, { isLoading, isSuccess, error, reset }] = useBlockIpMutation();
+  return (
+    <button
+      onClick={async () => {
+        if (!confirm(`Add a Suricata DROP rule for ${ip}?`)) return;
+        try {
+          await block(ip).unwrap();
+          setTimeout(() => reset(), 3000);
+        } catch {}
+      }}
+      disabled={isLoading}
+      title={`drop ip ${ip} via suricata`}
+      className={`ml-2 hax-btn text-[10px] ${
+        isSuccess
+          ? "border-hax-success text-hax-success"
+          : error
+          ? "border-hax-danger text-hax-danger"
+          : ""
+      } disabled:opacity-50`}
+    >
+      {isLoading ? "…" : isSuccess ? "✓ blocked" : error ? "! err" : "block"}
+    </button>
+  );
+}
+
 function FlowOverview({ flow }: { flow: FullFlow }) {
   let [searchParams, setSearchParams] = useSearchParams();
   const { unixTimeToTick } = getTickStuff();
@@ -370,27 +399,27 @@ function FlowOverview({ flow }: { flow: FullFlow }) {
   return (
     <div>
       {flow.signatures?.length > 0 ? (
-        <div className="bg-blue-200 p-2">
-          <div className="font-extrabold">Suricata</div>
-          <div className="pl-2">
+        <div className="bg-hax-surface border-l-4 border-hax-accent p-3 m-3 rounded-sm" style={{ boxShadow: '0 0 18px -8px rgba(168,85,247,0.5)' }}>
+          <div className="text-xs uppercase tracking-[0.25em] text-hax-accent-bright font-bold mb-2">▎suricata</div>
+          <div className="pl-2 text-sm font-mono">
             {flow.signatures.map((sig) => {
               return (
-                <div className="py-1">
+                <div className="py-1 border-t border-hax-border first:border-t-0">
                   <div className="flex">
-                    <div>Message:&nbsp;</div>
-                    <div className="font-bold">{sig.message}</div>
+                    <div className="text-hax-muted w-24">message</div>
+                    <div className="font-bold text-hax-text">{sig.message}</div>
                   </div>
                   <div className="flex">
-                    <div>Rule ID:&nbsp;</div>
-                    <div className="font-bold">{sig.id}</div>
+                    <div className="text-hax-muted w-24">rule id</div>
+                    <div className="font-bold text-hax-accent-bright">{sig.id}</div>
                   </div>
                   <div className="flex">
-                    <div>Action taken:&nbsp;</div>
+                    <div className="text-hax-muted w-24">action</div>
                     <div
                       className={
                         sig.action === "blocked"
-                          ? "font-bold text-red-800"
-                          : "font-bold text-green-800"
+                          ? "font-bold text-hax-danger uppercase tracking-wider"
+                          : "font-bold text-hax-success uppercase tracking-wider"
                       }
                     >
                       {sig.action}
@@ -402,9 +431,9 @@ function FlowOverview({ flow }: { flow: FullFlow }) {
           </div>
         </div>
       ) : undefined}
-      <div className="bg-yellow-200 p-2">
-        <div className="font-extrabold">Meta</div>
-        <div className="pl-2">
+      <div className="bg-hax-surface border-l-4 border-hax-warning/70 p-3 m-3 rounded-sm">
+        <div className="text-xs uppercase tracking-[0.25em] text-hax-warning font-bold mb-2">▎meta</div>
+        <div className="pl-2 text-sm font-mono">
           <div>
             Source:&nbsp;
             <a className="font-bold" href={`${API_BASE_PATH}/download/?file=${flow.filename}`}>
@@ -467,6 +496,7 @@ function FlowOverview({ flow }: { flow: FullFlow }) {
                 <span>{formatIP(flow.src_ip)}</span>:
                 <span className="font-bold">{flow.src_port}</span>
               </div>
+              <BlockIpButton ip={flow.src_ip} />
               <span>-</span>
               <div>
                 <span>{formatIP(flow.dst_ip)}</span>:
@@ -534,6 +564,7 @@ export function FlowView() {
 
   // TODO: account for user scrolling - update currentFlow accordingly
   const [currentFlow, setCurrentFlow] = useState<number>(-1);
+  const [exploitOpen, setExploitOpen] = useState(false);
 
   // reset scroll on flow switch
   useHotkeys('j', () => setCurrentFlow(0))
@@ -607,13 +638,13 @@ export function FlowView() {
   return (
     <div>
       <div
-        className="sticky shadow-md top-0 bg-white overflow-auto border-b border-b-gray-200 flex"
+        className="sticky shadow-md top-0 bg-hax-surface overflow-auto border-b border-hax-border flex"
         style={{ height: SECONDARY_NAVBAR_HEIGHT, zIndex: 100 }}
       >
         {(flow?.child_id != null || flow?.parent_id != null) ? (
-          <div className="flex align-middle p-2 gap-3">
+          <div className="flex items-center p-2 gap-2">
             <button
-              className="bg-yellow-700 text-white px-2 text-sm rounded-md disabled:opacity-50"
+              className="hax-btn flex items-center gap-1 disabled:opacity-30 disabled:cursor-not-allowed"
               key={"parent" + flow.parent_id}
               disabled={flow?.parent_id === null}
               onMouseDown={(e) => {
@@ -624,10 +655,10 @@ export function FlowView() {
                 }
               }}
             >
-              <ArrowCircleUpIcon className="inline-flex items-baseline w-5 h-5"></ArrowCircleUpIcon> Parent
+              <ArrowCircleUpIcon className="w-4 h-4"></ArrowCircleUpIcon> Parent
             </button>
             <button
-              className="bg-yellow-700 text-white px-2 text-sm rounded-md disabled:opacity-50"
+              className="hax-btn flex items-center gap-1 disabled:opacity-30 disabled:cursor-not-allowed"
               key={"child" + flow.child_id}
               disabled={flow?.child_id === null}
               onMouseDown={(e) => {
@@ -638,16 +669,18 @@ export function FlowView() {
                 }
               }}
             >
-              <ArrowCircleDownIcon className="inline-flex items-baseline w-5 h-5"></ArrowCircleDownIcon> Child
+              <ArrowCircleDownIcon className="w-4 h-4"></ArrowCircleDownIcon> Child
             </button>
           </div>
         ) : undefined}
-        <div className="flex align-middle p-2 gap-3 ml-auto">
-          <p className="my-auto">Decoders <abbr title={"Number of decoders available for this flow: " + flow?.flow.length}>({flow?.flow.length})</abbr>:</p>
+        <div className="flex items-center p-2 gap-2 ml-auto">
+          <p className="my-auto text-xs uppercase tracking-wider text-hax-muted">
+            decoders <abbr title={"Number of decoders available for this flow: " + flow?.flow.length} className="text-hax-accent-bright">({flow?.flow.length})</abbr>:
+          </p>
           <select
             id="repr-select"
             value={reprId}
-            className="border-2 border-gray-700 text-black px-2 text-sm rounded-md"
+            className="text-xs"
             onChange={(e) => {
               const target = e.target as HTMLSelectElement;
               const newreprid = parseInt(target.value);
@@ -657,7 +690,7 @@ export function FlowView() {
             {flow?.flow.map((e, i) => <option key={id + "reprselect" + i} value={i}>{e["type"]}</option>)}
           </select>
           {reprId > 0 ? <button
-            className="bg-gray-700 text-white px-2 text-sm rounded-md"
+            className="hax-btn hax-btn-primary"
             title="Diff this representation with the base"
             onClick={(e) => {
               searchParams.set(FIRST_DIFF_KEY, `${id}`);
@@ -665,25 +698,38 @@ export function FlowView() {
               navigate(`/diff/${id ?? ""}?${searchParams}`, { replace: true });
             }}
           >
-            <LightningBoltIcon className="h-5 w-5"></LightningBoltIcon>
+            <LightningBoltIcon className="h-4 w-4"></LightningBoltIcon>
           </button> : undefined}
           <button
-            className="bg-gray-700 text-white px-2 text-sm rounded-md"
+            className="hax-btn hax-btn-primary"
             onClick={copyPwn}
           >
             {pwnCopyStatusText}
           </button>
 
           <button
-            className="bg-gray-700 text-white px-2 text-sm rounded-md"
+            className="hax-btn hax-btn-primary"
             onClick={copyRequests}
           >
             {requestsCopyStatusText}
           </button>
+
+          <button
+            className="hax-btn hax-btn-primary"
+            onClick={() => setExploitOpen(true)}
+            title="Replay this flow against configured enemy teams"
+          >
+            ▶ test exploit
+          </button>
         </div>
       </div>
 
+      {exploitOpen && id && (
+        <ExploitModal flowId={id} onClose={() => setExploitOpen(false)} />
+      )}
+
       {flow ? <FlowOverview flow={flow}></FlowOverview> : undefined}
+      {flow && <NotesPanel flowId={flow.id} />}
       {flow?.flow[(reprId < flow?.flow.length) ? reprId : 0].flow.map((flow_data, i, a) => {
         const delta_time = a[i].time - (a[i - 1]?.time ?? a[i].time);
         return (

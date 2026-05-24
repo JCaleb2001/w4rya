@@ -17,6 +17,7 @@ import psycopg_pool
 from psycopg import sql
 from psycopg.rows import class_row, dict_row
 
+import app_config
 import configurations
 from json_util import JsonFactory
 
@@ -28,6 +29,9 @@ class FlowQuery:
     ip_dst: IPv4Network | IPv6Network | None = None
     port_src: int | None = None
     port_dst: int | None = None
+    # Multi-service filter: list of (ip, port) pairs OR-ed together. Lets the
+    # UI multi-select chips translate to a single SQL query.
+    services: list[tuple[IPv4Network | IPv6Network, int]] = field(default_factory=list)
     time_from: datetime | None = None
     time_to: datetime | None = None
     tags_include: list[str] = field(default_factory=list)
@@ -154,6 +158,20 @@ class Connection(psycopg.Connection):
         if query.port_dst:
             parameters["port_dst"] = query.port_dst
             conditions.append(sql.SQL("f.port_dst = %(port_dst)s"))
+
+        if query.services:
+            pair_sqls = []
+            for i, (svc_ip, svc_port) in enumerate(query.services):
+                ip_key = f"svc_ip_{i}"
+                port_key = f"svc_port_{i}"
+                parameters[ip_key] = svc_ip
+                parameters[port_key] = svc_port
+                pair_sqls.append(
+                    sql.SQL("(f.ip_dst <<= %({ip})s AND f.port_dst = %({port})s)").format(
+                        ip=sql.SQL(ip_key), port=sql.SQL(port_key)
+                    )
+                )
+            conditions.append(sql.SQL("(") + sql.SQL(" OR ").join(pair_sqls) + sql.SQL(")"))
 
         if query.time_from:
             parameters["time_from"] = query.time_from
@@ -286,8 +304,8 @@ class Connection(psycopg.Connection):
 
     def stats_query(self, query: StatsQuery) -> dict[int, Stats]:
         now = datetime.now(tz=timezone.utc)
-        tick_first = dateutil.parser.parse(configurations.start_date)
-        tick_length = timedelta(milliseconds=int(configurations.tick_length))
+        tick_first = dateutil.parser.parse(app_config.get("start_date"))
+        tick_length = timedelta(milliseconds=int(app_config.get("tick_length")))
         tick_current = ((now - tick_first) // tick_length) + 1
         tick_start = query.tick_from if query.tick_from else 0
         tick_end = query.tick_to if query.tick_to else tick_current
@@ -349,3 +367,122 @@ class Connection(psycopg.Connection):
         with self.cursor(row_factory=dict_row) as cursor:
             tags = cursor.execute("SELECT name FROM tag ORDER BY sort ASC").fetchall()
             return [t["name"] for t in tags]
+
+    def attack_timeline(
+        self,
+        time_from: datetime,
+        time_to: datetime,
+        services: list[dict],
+        service_filter: str | None = None,
+        limit: int = 200,
+    ) -> list[dict]:
+        """Chronological list of attack-flavored events in the time window.
+
+        An 'event' is any flow that either matched a Suricata signature OR
+        leaked a flag (tag = flag-out). For each event we resolve the dst
+        (ip, port) to the configured service name.
+        """
+        sql_query = """
+            SELECT id, time,
+                   ip_src::text AS ip_src,
+                   ip_dst::text AS ip_dst,
+                   port_src, port_dst,
+                   flags_out, signatures, tags
+            FROM flow
+            WHERE (jsonb_array_length(signatures) > 0 OR tags ? 'flag-out')
+              AND id > fid_pack_low(%(t0)s)
+              AND id < fid_pack_high(%(t1)s)
+            ORDER BY time DESC
+            LIMIT %(limit)s
+        """
+        with self.cursor(row_factory=dict_row) as cursor:
+            rows = cursor.execute(
+                sql_query,
+                {"t0": time_from, "t1": time_to, "limit": limit},
+            ).fetchall()
+
+        svc_by_key = {
+            (str(s.get("ip", "")), int(s.get("port", -1) or 0)): s.get("name", "?")
+            for s in services
+        }
+        out: list[dict] = []
+        for r in rows:
+            ip_dst = str(r["ip_dst"]).split("/", 1)[0]
+            ip_src = str(r["ip_src"]).split("/", 1)[0]
+            svc_name = svc_by_key.get((ip_dst, int(r["port_dst"])), "unknown")
+            if service_filter and svc_name != service_filter:
+                continue
+            sigs = r.get("signatures") or []
+            tags = r.get("tags") or []
+            has_flag = "flag-out" in tags
+            has_alert = bool(sigs)
+            if has_alert and has_flag:
+                ev_type = "both"
+            elif has_alert:
+                ev_type = "alert"
+            else:
+                ev_type = "flag_out"
+            out.append({
+                "flow_id": str(r["id"]),
+                "time": r["time"].isoformat(),
+                "src_ip": ip_src,
+                "src_port": int(r["port_src"]),
+                "dst_ip": ip_dst,
+                "dst_port": int(r["port_dst"]),
+                "service": svc_name,
+                "type": ev_type,
+                "rules": [
+                    {
+                        "id": s.get("id"),
+                        "message": s.get("message"),
+                        "action": s.get("action"),
+                    }
+                    for s in sigs
+                ],
+                "flag_out_count": int(r["flags_out"] or 0) if has_flag else 0,
+            })
+        return out
+
+    def per_service_stats(self, time_start: datetime, services: list[dict]) -> list[dict]:
+        """Aggregate flow / attack / flag counts for each configured service.
+
+        We do one grouped scan over the flow table for the time window, then
+        align the (ip, port) result rows against the services config. Services
+        with zero matching flows still come back (with zero counters) so the
+        UI can show every chip consistently.
+        """
+        sql_query = """
+            SELECT ip_dst::text AS ip_dst,
+                   port_dst,
+                   count(*)                                              AS flows,
+                   sum(CASE WHEN jsonb_array_length(signatures) > 0
+                            THEN 1 ELSE 0 END)                           AS attacks,
+                   sum(flags_in)                                         AS flag_in,
+                   sum(flags_out)                                        AS flag_out
+            FROM flow
+            WHERE id > fid_pack_low(%(time_start)s)
+            GROUP BY ip_dst, port_dst
+        """
+        with self.cursor(row_factory=dict_row) as cursor:
+            rows = cursor.execute(sql_query, {"time_start": time_start}).fetchall()
+        # Index by (ip_string_no_prefix, port). ip_dst comes back as CIDR
+        # ('10.10.3.1/32'), strip the suffix to compare with the plain ips in
+        # the services config.
+        by_key: dict[tuple[str, int], dict] = {}
+        for r in rows:
+            ip_clean = str(r["ip_dst"]).split("/", 1)[0]
+            by_key[(ip_clean, int(r["port_dst"]))] = r
+
+        out: list[dict] = []
+        for s in services:
+            row = by_key.get((str(s.get("ip", "")), int(s.get("port", -1) or 0)))
+            out.append({
+                "name": s.get("name"),
+                "ip": s.get("ip"),
+                "port": s.get("port"),
+                "flows": int(row["flows"]) if row else 0,
+                "attacks": int(row["attacks"]) if row else 0,
+                "flag_in": int(row["flag_in"] or 0) if row else 0,
+                "flag_out": int(row["flag_out"] or 0) if row else 0,
+            })
+        return out

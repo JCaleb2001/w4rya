@@ -25,7 +25,7 @@
 import os
 from pathlib import Path
 
-traffic_dir = Path(os.getenv("TULIP_TRAFFIC_DIR", "/traffic"))
+traffic_dir = Path(os.getenv("W4RYA_TRAFFIC_DIR", "/traffic"))
 dump_pcaps_dir = Path(os.getenv("DUMP_PCAPS", "/traffic"))
 tick_length = os.getenv("TICK_LENGTH", 2*60*1000)
 flag_lifetime = os.getenv("FLAG_LIFETIME", 5)

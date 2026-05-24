@@ -22,48 +22,11 @@ import {
 import {
   useGetFlowQuery,
   useGetServicesQuery,
+  useGetMeQuery,
+  useLogoutMutation,
+  hasRole,
 } from "../api";
 import { getTickStuff } from "../tick";
-
-function ServiceSelection() {
-  const FILTER_KEY = SERVICE_FILTER_KEY;
-
-  // TODO add all, maybe user react-select
-
-  const { data: services } = useGetServicesQuery(undefined, {
-    pollingInterval: SERVICE_REFETCH_INTERVAL_MS,
-  });
-
-  const service_select = [
-    {
-      ip: "",
-      port: 0,
-      name: "all",
-    },
-    ...(services || []),
-  ];
-  let [searchParams, setSearchParams] = useSearchParams();
-  return (
-    <select
-      value={searchParams.get(FILTER_KEY) ?? ""}
-      onChange={(event) => {
-        let serviceFilter = event.target.value;
-        if (serviceFilter && serviceFilter != "all") {
-          searchParams.set(FILTER_KEY, serviceFilter);
-        } else {
-          searchParams.delete(FILTER_KEY);
-        }
-        setSearchParams(searchParams);
-      }}
-    >
-      {service_select.map((service) => (
-        <option key={service.name} value={service.name}>
-          {service.name}
-        </option>
-      ))}
-    </select>
-  );
-}
 
 function TextSearch() {
   const FILTER_KEY = TEXT_FILTER_KEY;
@@ -235,13 +198,44 @@ function Diff() {
 
   return (
     <button
-      className=" bg-amber-100 text-gray-800 rounded-md px-2 py-1"
+      className="hax-btn hax-btn-primary"
       onClick={() => {
         navigateToDiff()
       }}
     >
       Diff
     </button>
+  );
+}
+
+function UserMenu() {
+  const { data: me } = useGetMeQuery();
+  const [logout, { isLoading }] = useLogoutMutation();
+  if (!me?.user) return null;
+  const roleColor =
+    me.role === "admin"
+      ? "text-hax-danger"
+      : me.role === "operator"
+      ? "text-hax-warning"
+      : "text-hax-muted";
+  return (
+    <div className="flex items-center gap-2 font-mono">
+      <div className="text-xs uppercase tracking-[0.15em]">
+        <span className="text-hax-muted">user</span>{" "}
+        <span className="text-hax-accent-bright">{me.user}</span>
+        <span className={`ml-1 ${roleColor}`} title={`role: ${me.role}`}>
+          [{me.role ?? "?"}]
+        </span>
+      </div>
+      <button
+        className="hax-btn"
+        disabled={isLoading}
+        onClick={() => logout()}
+        title="Logout"
+      >
+        {isLoading ? "…" : "logout"}
+      </button>
+    </div>
   );
 }
 
@@ -263,15 +257,13 @@ export function Header() {
   return (
     <>
       <Link to={`/?${searchParams}`}>
-        <div className="header-icon">🌷</div>
+        <div className="header-icon">
+          <img src="/logo.png" alt="w4rya" className="h-7 w-7" />
+          <span className="brand text-base">w4rya</span>
+        </div>
       </Link>
       <div>
         <TextSearch></TextSearch>
-      </div>
-      <div>
-        <Suspense>
-          <ServiceSelection></ServiceSelection>
-        </Suspense>
       </div>
       <div>
         <StartDateSelection></StartDateSelection>
@@ -281,17 +273,39 @@ export function Header() {
       </div>
       <div>
         <button
-          className=" bg-amber-100 text-gray-800 rounded-md px-2 py-1"
+          className="hax-btn hax-btn-primary"
           onClick={() => setToLastnTicks(5)}
         >
           Last 5 ticks
         </button>
       </div>
       <Link to={`/corrie?${searchParams}`}>
-        <div className="bg-blue-100 text-gray-800 rounded-md px-2 py-1">
+        <div className="hax-btn">
           Graph view
         </div>
       </Link>
+      <Link to="/attacks">
+        <div className="hax-btn">
+          Attacks
+        </div>
+      </Link>
+      <Link to="/config">
+        <div className="hax-btn">
+          Config
+        </div>
+      </Link>
+      <Link to="/rules">
+        <div className="hax-btn">
+          Rules
+        </div>
+      </Link>
+      {hasRole(useGetMeQuery().data?.role, "admin") && (
+        <Link to="/audit">
+          <div className="hax-btn">
+            Audit
+          </div>
+        </Link>
+      )}
       <div className="ml-auto mr-4" style={{ display: "flex" }}>
         <div className="mr-4">
           <FirstDiff />
@@ -305,7 +319,7 @@ export function Header() {
           </Suspense>
         </div>
         <div
-          className="ml-auto"
+          className="ml-auto text-xs uppercase tracking-[0.2em] font-mono"
           style={{
             display: "flex",
             justifyContent: "center",
@@ -313,7 +327,13 @@ export function Header() {
             flexDirection: "column",
           }}
         >
-          Current: {currentTick}
+          <span className="text-hax-muted">tick</span>
+          <span className="text-hax-accent-bright hax-glow text-lg leading-tight">
+            {currentTick}
+          </span>
+        </div>
+        <div className="ml-4 mr-2 self-center">
+          <UserMenu />
         </div>
       </div>
     </>
