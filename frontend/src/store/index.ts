@@ -6,11 +6,13 @@ import type { TypedUseSelectorHook } from "react-redux";
 import { w4ryaApi } from "../api";
 
 import filterReducer from "./filter";
+import toastsReducer from "./toasts";
 
 export const store = configureStore({
   reducer: {
     [w4ryaApi.reducerPath]: w4ryaApi.reducer,
     filter: filterReducer,
+    toasts: toastsReducer,
   },
   middleware: (getDefaultMiddleware) =>
     getDefaultMiddleware().concat(w4ryaApi.middleware),

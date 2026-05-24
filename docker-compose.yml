@@ -10,6 +10,7 @@ services:
     - ./services/schema/functions.sql:/docker-entrypoint-initdb.d/101_functions.sql:ro
     - ./services/schema/schema.sql:/docker-entrypoint-initdb.d/102_schema.sql:ro
     - ./services/schema/app_config.sql:/docker-entrypoint-initdb.d/200_app_config.sql:ro
+    - ./services/schema/notes.sql:/docker-entrypoint-initdb.d/201_notes.sql:ro
     networks:
       - internal
     environment:

@@ -19,6 +19,8 @@ import { Login } from "./pages/Login";
 import { Config } from "./pages/Config";
 import { Rules } from "./pages/Rules";
 import { useGetMeQuery } from "./api";
+import { Toasts } from "./components/Toasts";
+import { FlagLeakWatcher } from "./components/FlagLeakWatcher";
 
 function RequireAuth({ children }: { children: JSX.Element }) {
   const { data, isLoading, isError } = useGetMeQuery();
@@ -114,6 +116,8 @@ function Layout() {
         <Outlet />
       </main>
       <footer className="footer-area"></footer>
+      <FlagLeakWatcher />
+      <Toasts />
     </div>
   );
 }

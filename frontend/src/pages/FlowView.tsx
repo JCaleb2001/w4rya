@@ -25,6 +25,7 @@ import { hexy } from "hexy";
 import { useCopy } from "../hooks/useCopy";
 import { RadioGroup } from "../components/RadioGroup";
 import { ExploitModal } from "../components/ExploitModal";
+import { NotesPanel } from "../components/NotesPanel";
 import { useBlockIpMutation } from "../api";
 import {
   useGetFlowQuery,
@@ -728,6 +729,7 @@ export function FlowView() {
       )}
 
       {flow ? <FlowOverview flow={flow}></FlowOverview> : undefined}
+      {flow && <NotesPanel flowId={flow.id} />}
       {flow?.flow[(reprId < flow?.flow.length) ? reprId : 0].flow.map((flow_data, i, a) => {
         const delta_time = a[i].time - (a[i - 1]?.time ?? a[i].time);
         return (

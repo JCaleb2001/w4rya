@@ -52,6 +52,7 @@ import database, json_util
 import auth
 import app_config
 import attack
+import notes
 import rules
 
 application = Flask(__name__)
@@ -386,6 +387,50 @@ def attack_replay():
     return return_json_response(result)
 
 
+# --- /flow/<id>/notes ------------------------------------------------------
+
+@application.route("/flow/<flow_id>/notes")
+def list_flow_notes(flow_id):
+    try:
+        fid = uuid.UUID(flow_id)
+    except ValueError:
+        return jsonify({"error": "invalid flow id"}), 400
+    items = [n.to_dict() for n in notes.list_for_flow(fid)]
+    return return_json_response(items)
+
+
+@application.route("/flow/<flow_id>/notes", methods=["POST"])
+def add_flow_note(flow_id):
+    try:
+        fid = uuid.UUID(flow_id)
+    except ValueError:
+        return jsonify({"error": "invalid flow id"}), 400
+    user = auth.current_user() or "anon"
+    body = (request.get_json(silent=True) or {}).get("body", "")
+    try:
+        n = notes.add(fid, user, body)
+    except (ValueError, RuntimeError) as e:
+        return jsonify({"error": str(e)}), 400
+    return return_json_response(n.to_dict())
+
+
+@application.route("/notes/<note_id>", methods=["DELETE"])
+def delete_flow_note(note_id):
+    try:
+        nid = uuid.UUID(note_id)
+    except ValueError:
+        return jsonify({"error": "invalid note id"}), 400
+    user = auth.current_user() or ""
+    err = notes.delete(nid, user)
+    if err == "not_found":
+        return jsonify({"error": "note not found"}), 404
+    if err == "forbidden":
+        return jsonify({"error": "only the author can delete"}), 403
+    if err:
+        return jsonify({"error": err}), 500
+    return jsonify({"ok": True})
+
+
 # --- /rules (suricata rules CRUD) ------------------------------------------
 
 @application.route("/rules")
@@ -613,6 +658,8 @@ def create_app():
     db.open()
     app_config.set_pool(db)
     app_config.init_schema()
+    notes.set_pool(db)
+    notes.init_schema()
     return application
 
 if __name__ == "__main__":

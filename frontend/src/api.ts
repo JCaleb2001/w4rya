@@ -49,7 +49,7 @@ const baseQueryWithReauth: BaseQueryFn<
 
 export const w4ryaApi = createApi({
   baseQuery: baseQueryWithReauth,
-  tagTypes: ["Me", "Config", "Services", "Teams", "TickInfo", "FlagRegex", "Rules"],
+  tagTypes: ["Me", "Config", "Services", "Teams", "TickInfo", "FlagRegex", "Rules", "Notes"],
   endpoints: (builder) => ({
     getServices: builder.query<Service[], void>({
       query: () => "/services",
@@ -301,6 +301,24 @@ export const w4ryaApi = createApi({
       }),
       invalidatesTags: ["Rules"],
     }),
+
+    // --- notes per flow ---
+    getNotes: builder.query<Note[], string>({
+      query: (flow_id) => `/flow/${flow_id}/notes`,
+      providesTags: (_r, _e, flow_id) => [{ type: "Notes", id: flow_id }],
+    }),
+    addNote: builder.mutation<Note, { flow_id: string; body: string }>({
+      query: ({ flow_id, body }) => ({
+        url: `/flow/${flow_id}/notes`,
+        method: "POST",
+        body: { body },
+      }),
+      invalidatesTags: (_r, _e, { flow_id }) => [{ type: "Notes", id: flow_id }],
+    }),
+    deleteNote: builder.mutation<{ ok: boolean }, { id: string; flow_id: string }>({
+      query: ({ id }) => ({ url: `/notes/${id}`, method: "DELETE" }),
+      invalidatesTags: (_r, _e, { flow_id }) => [{ type: "Notes", id: flow_id }],
+    }),
   }),
 });
 
@@ -379,6 +397,14 @@ export interface RulesPayload {
   templates: RuleTemplate[];
 }
 
+export interface Note {
+  id: string;
+  flow_id: string;
+  author: string;
+  body: string;
+  created_at: string;
+}
+
 export const {
   useGetServicesQuery,
   useGetFlagRegexQuery,
@@ -409,4 +435,7 @@ export const {
   useUpdateRuleMutation,
   useDeleteRuleMutation,
   useBlockIpMutation,
+  useGetNotesQuery,
+  useAddNoteMutation,
+  useDeleteNoteMutation,
 } = w4ryaApi;
