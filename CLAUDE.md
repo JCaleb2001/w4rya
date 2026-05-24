@@ -104,9 +104,35 @@ These are load-bearing; changing them without coordination breaks things downstr
 
 Leave these alone unless we're doing an explicit cleanup pass; they don't affect the live stack.
 
+## Auth
+
+Basic auth is enabled. The api requires a Flask session cookie for every endpoint except `/`, `/login`, `/logout`.
+
+- **Storage**: `auth/users.yaml` (gitignored). Schema: `users: { <name>: { password_hash: <bcrypt> } }`. Read by `services/api/auth.py` with mtime-based caching, so editing the file doesn't strictly require a restart, though `docker compose restart api` is safer.
+- **Cookie**: name `w4rya_session`, httpOnly, SameSite=Lax, Secure=False (flip to True when running behind HTTPS), 7-day lifetime. Signed with `W4RYA_SECRET_KEY` from `.env`.
+- **Mount**: `./auth:/app/auth` (rw — the bootstrap CLI writes to it; the api code only reads).
+- **Frontend**: `frontend/src/api.ts` wraps `fetchBaseQuery` with `credentials:'include'`, a `Me` tag type, and a 401 catcher that invalidates `Me` (so mid-session expiry triggers RequireAuth → redirect to `/login`). `RequireAuth` in `App.tsx` is the gate.
+
+### Bootstrap a user
+
+```
+docker compose run --rm api python /app/auth/add_user.py <username>
+```
+
+Prompts for password (getpass, no echo). Writes bcrypt cost-12 hash to `auth/users.yaml`. Then `docker compose restart api` (or just wait for the mtime cache to expire on next request).
+
+Do NOT use `sudo` for the above — your user is in the `docker` group, and `sudo` makes `users.yaml` root-owned on the host (annoying to edit later). If you already did, `sudo chown -R $USER:$USER auth/` fixes it.
+
+### Rotating a password
+
+Re-run `add_user.py <same-username>` — it overwrites the hash for that user. To remove a user, edit `auth/users.yaml` by hand and delete the entry.
+
+### Rotating the session secret
+
+Change `W4RYA_SECRET_KEY` in `.env` and `docker compose restart api`. All existing sessions are invalidated (clients get 401 → redirected to login).
+
 ## Roadmap (planned, not yet implemented)
 
-- **Basic auth** for team-internal use (bcrypt + session cookie or JWT, Flask middleware, frontend login/logout). Not internet-facing; threat model is "keep curious teammates / scoreboard scrapers out", not "production AuthN".
 - **Suricata rules CRUD from UI** — list/create/edit/delete rules in `${SURICATA_DIR_HOST}/lib/rules/suricata.rules`, with basic syntax validation and Suricata container reload.
 
-When implementing either, do read-only analysis first (the user will ask) before touching code.
+When implementing, do read-only analysis first (the user will ask) before touching code.
