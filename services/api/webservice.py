@@ -27,6 +27,7 @@ import os
 import re
 import traceback
 import uuid
+from datetime import datetime, timedelta, timezone
 from flask import Flask, Response, send_file, jsonify, session
 from requests import get
 import dateutil.parser
@@ -54,6 +55,7 @@ import app_config
 import attack
 import notes
 import rules
+import suricata_ctl
 
 application = Flask(__name__)
 
@@ -251,6 +253,30 @@ def getServices():
     return return_json_response(app_config.get("services"))
 
 
+@application.route("/services/stats")
+def get_services_stats():
+    try:
+        ticks = int(request.args.get("ticks", 5))
+    except ValueError:
+        ticks = 5
+    ticks = max(1, min(50, ticks))
+    tick_length_ms = int(app_config.get("tick_length") or 180000)
+    services_cfg = app_config.get("services") or []
+
+    now = datetime.now(tz=timezone.utc)
+    time_start = now - timedelta(milliseconds=tick_length_ms * ticks)
+
+    with db.connection() as c:
+        rows = c.per_service_stats(time_start, services_cfg)
+
+    return return_json_response({
+        "ticks": ticks,
+        "tick_length_ms": tick_length_ms,
+        "from": time_start.isoformat(),
+        "services": rows,
+    })
+
+
 @application.route("/flag_regex")
 def getFlagRegex():
     return return_json_response(app_config.get("flag_regex"))
@@ -433,6 +459,24 @@ def delete_flow_note(note_id):
 
 # --- /rules (suricata rules CRUD) ------------------------------------------
 
+def _maybe_autoreload() -> dict | None:
+    """If rules_autoreload is on, trigger a suricata reload-rules.
+    Returns suricata's response (or {error: ...}) for inclusion in the API
+    response; never raises (we don't want a flaky socket to fail a save).
+
+    Reads the toggle uncached so that a flip from another gunicorn worker is
+    picked up on the next save (workers each hold a 5s per-key cache).
+    """
+    if not app_config.get_fresh("rules_autoreload"):
+        return None
+    try:
+        return suricata_ctl.reload_rules()
+    except FileNotFoundError as e:
+        return {"error": str(e), "kind": "socket_missing"}
+    except (OSError, ValueError) as e:
+        return {"error": f"{type(e).__name__}: {e}", "kind": "socket_error"}
+
+
 @application.route("/rules")
 def list_rules():
     try:
@@ -443,6 +487,10 @@ def list_rules():
         "file": rules.RULES_FILE,
         "rules": items,
         "templates": rules.TEMPLATES,
+        "suricata": {
+            "socket_available": suricata_ctl.available(),
+            "autoreload": bool(app_config.get("rules_autoreload")),
+        },
     })
 
 
@@ -457,7 +505,11 @@ def add_rule():
         rule = rules.add(raw, enabled=enabled)
     except (ValueError, OSError) as e:
         return jsonify({"error": str(e)}), 400
-    return return_json_response(rule.to_dict())
+    result = rule.to_dict()
+    reload = _maybe_autoreload()
+    if reload is not None:
+        result["reload"] = reload
+    return return_json_response(result)
 
 
 @application.route("/rules/<int:sid>", methods=["PUT"])
@@ -475,7 +527,11 @@ def update_rule(sid: int):
         return jsonify({"error": str(e)}), 400
     if not rule:
         return jsonify({"error": "rule not found"}), 404
-    return return_json_response(rule.to_dict())
+    result = rule.to_dict()
+    reload = _maybe_autoreload()
+    if reload is not None:
+        result["reload"] = reload
+    return return_json_response(result)
 
 
 @application.route("/rules/<int:sid>", methods=["DELETE"])
@@ -486,7 +542,11 @@ def delete_rule(sid: int):
         return jsonify({"error": str(e)}), 500
     if not ok:
         return jsonify({"error": "rule not found"}), 404
-    return jsonify({"ok": True})
+    out: dict = {"ok": True}
+    reload = _maybe_autoreload()
+    if reload is not None:
+        out["reload"] = reload
+    return jsonify(out)
 
 
 @application.route("/rules/block-ip", methods=["POST"])
@@ -499,7 +559,22 @@ def rules_block_ip():
         rule = rules.block_ip(ip)
     except (ValueError, OSError) as e:
         return jsonify({"error": str(e)}), 400
-    return return_json_response(rule.to_dict())
+    result = rule.to_dict()
+    reload = _maybe_autoreload()
+    if reload is not None:
+        result["reload"] = reload
+    return return_json_response(result)
+
+
+@application.route("/rules/reload", methods=["POST"])
+def reload_rules_route():
+    try:
+        result = suricata_ctl.reload_rules()
+    except FileNotFoundError as e:
+        return jsonify({"error": str(e), "kind": "socket_missing"}), 503
+    except (OSError, ValueError) as e:
+        return jsonify({"error": f"{type(e).__name__}: {e}", "kind": "socket_error"}), 502
+    return jsonify(result)
 
 
 @application.route("/attack/exploit-script/<flow_id>")

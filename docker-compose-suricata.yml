@@ -58,6 +58,8 @@ services:
       # suricata rules editable from the UI. Mounted rw on api (writes)
       # and ro on the suricata container below (reads).
       - ./suricata-rules:/app/suricata-rules
+      # suricata command socket directory (B1 auto-reload).
+      - ./suricata-run:/var/run/suricata
     environment:
       TIMESCALE: ${TIMESCALE}
       W4RYA_TRAFFIC_DIR: ${TRAFFIC_DIR_DOCKER}
@@ -148,8 +150,13 @@ services:
       - ${SURICATA_DIR_HOST}/log:/var/log/suricata
       - ${SURICATA_DIR_HOST}/etc:/etc/suricata
       - ${SURICATA_DIR_HOST}/lib:/var/lib/suricata
+      # Shared with api: suricata writes the command socket here, api connects
+      # to it to trigger reload-rules without docker.sock or PID sharing.
+      - ./suricata-run:/var/run/suricata
     environment:
-      SURICATA_OPTIONS: "-l /var/log/suricata -v -r ${TRAFFIC_DIR_DOCKER} --pcap-file-continuous"
+      # --set unix-command.enabled=yes turns on the JSON command socket at
+      # /var/run/suricata/suricata-command.socket regardless of runmode.
+      SURICATA_OPTIONS: "-l /var/log/suricata -v -r ${TRAFFIC_DIR_DOCKER} --pcap-file-continuous --set unix-command.enabled=yes"
 
 volumes:
   timescale-data:

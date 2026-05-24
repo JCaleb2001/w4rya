@@ -5,8 +5,12 @@ import {
   useAddRuleMutation,
   useDeleteRuleMutation,
   useGetRulesQuery,
+  useReloadRulesMutation,
+  useUpdateConfigMutation,
   useUpdateRuleMutation,
 } from "../api";
+import { useAppDispatch } from "../store";
+import { pushToast } from "../store/toasts";
 
 export function Rules() {
   const { data, isLoading, refetch } = useGetRulesQuery();
@@ -45,12 +49,10 @@ export function Rules() {
         </button>
       </div>
 
-      <div className="text-[10px] uppercase tracking-wider text-hax-warning border border-hax-warning/30 bg-hax-warning/5 px-3 py-2 mb-4 rounded-sm normal-case">
-        ⚠ rules are saved to disk on every change. suricata needs to be reloaded for them to take effect:{" "}
-        <code className="text-hax-warning">
-          docker compose -f docker-compose-suricata.yml restart suricata
-        </code>
-      </div>
+      <SuricataControlBar
+        socketAvailable={data.suricata?.socket_available ?? false}
+        autoreload={data.suricata?.autoreload ?? false}
+      />
 
       <TemplatesBar
         templates={data.templates}
@@ -100,6 +102,104 @@ export function Rules() {
           </tbody>
         </table>
       </div>
+    </div>
+  );
+}
+
+function SuricataControlBar({
+  socketAvailable,
+  autoreload,
+}: {
+  socketAvailable: boolean;
+  autoreload: boolean;
+}) {
+  const dispatch = useAppDispatch();
+  const [reload, { isLoading: reloading }] = useReloadRulesMutation();
+  const [updateConfig, { isLoading: saving }] = useUpdateConfigMutation();
+
+  async function doReload() {
+    try {
+      const r = await reload().unwrap();
+      const ok = r.return === "OK";
+      dispatch(
+        pushToast({
+          message: ok
+            ? `suricata reloaded: ${r.message ?? "OK"}`
+            : `reload returned: ${JSON.stringify(r)}`,
+          severity: ok ? "success" : "warning",
+        })
+      );
+    } catch (err: any) {
+      dispatch(
+        pushToast({
+          message: `reload failed: ${err?.data?.error ?? err?.status ?? "unknown"}`,
+          severity: "danger",
+        })
+      );
+    }
+  }
+
+  async function toggleAutoreload() {
+    try {
+      await updateConfig({ rules_autoreload: !autoreload }).unwrap();
+      dispatch(
+        pushToast({
+          message: `auto-reload ${!autoreload ? "enabled" : "disabled"}`,
+          severity: "info",
+          ttl_ms: 3000,
+        })
+      );
+    } catch {}
+  }
+
+  return (
+    <div className="border border-hax-border bg-hax-surface rounded-sm p-3 mb-4 flex items-center gap-4 flex-wrap text-xs">
+      <div className="flex items-center gap-2">
+        <span className="text-hax-muted uppercase tracking-wider text-[10px]">
+          suricata socket
+        </span>
+        {socketAvailable ? (
+          <span className="text-hax-success uppercase tracking-wider">
+            ● reachable
+          </span>
+        ) : (
+          <span className="text-hax-dim uppercase tracking-wider">○ offline</span>
+        )}
+      </div>
+
+      <button
+        onClick={doReload}
+        disabled={!socketAvailable || reloading}
+        className="hax-btn hax-btn-primary disabled:opacity-40 disabled:cursor-not-allowed"
+        title={
+          socketAvailable
+            ? "send reload-rules to suricata"
+            : "suricata not running"
+        }
+      >
+        {reloading ? "reloading…" : "▶ reload now"}
+      </button>
+
+      <label className="flex items-center gap-2 cursor-pointer ml-auto">
+        <span className="text-hax-muted uppercase tracking-wider text-[10px]">
+          auto-reload on save
+        </span>
+        <button
+          onClick={toggleAutoreload}
+          disabled={saving}
+          className={`w-9 h-5 rounded-sm border transition-colors relative ${
+            autoreload
+              ? "bg-hax-accent border-hax-accent"
+              : "bg-hax-bg border-hax-border"
+          }`}
+        >
+          <div
+            className={`absolute top-0.5 w-3.5 h-3.5 rounded-sm bg-hax-bg transition-transform ${
+              autoreload ? "translate-x-4" : "translate-x-0.5"
+            }`}
+          />
+        </button>
+      </label>
     </div>
   );
 }

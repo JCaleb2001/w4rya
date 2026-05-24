@@ -68,6 +68,8 @@ DEFAULTS: dict[str, Any] = {
     "team_id": os.environ.get("TEAM_ID", "0"),
     "visualizer_url": os.environ.get("VISUALIZER_URL", ""),
     "bpf": os.environ.get("BPF", ""),
+    # B1: trigger suricatasc reload-rules after every rules CRUD when on
+    "rules_autoreload": False,
 }
 
 
@@ -121,6 +123,18 @@ def get(key: str, default: Any = None) -> Any:
 
     with _lock:
         _cache[key] = (now, val)
+    return val
+
+
+def get_fresh(key: str, default: Any = None) -> Any:
+    """Bypass the per-worker cache. Use when you need to see a value just
+    written by another gunicorn worker (e.g. a feature toggle that must
+    take effect across workers immediately)."""
+    val = _read_db(key)
+    if val is None:
+        val = DEFAULTS.get(key, default)
+    with _lock:
+        _cache[key] = (time.time(), val)
     return val
 
 
@@ -196,10 +210,21 @@ SCALAR_KEYS = {
     "team_id",
     "visualizer_url",
     "bpf",
+    "rules_autoreload",
 }
+
+BOOL_KEYS = {"rules_autoreload"}
 
 
 def coerce_scalar(key: str, raw: Any) -> Any:
     if key == "tick_length" or key == "flag_lifetime":
         return int(raw)
+    if key in BOOL_KEYS:
+        if isinstance(raw, bool):
+            return raw
+        if isinstance(raw, (int, float)):
+            return bool(raw)
+        if isinstance(raw, str):
+            return raw.strip().lower() in ("true", "1", "yes", "on")
+        return False
     return str(raw)

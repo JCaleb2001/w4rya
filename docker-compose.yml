@@ -58,6 +58,9 @@ services:
       # suricata rules editable from the UI. Mounted rw on both api (writes)
       # and suricata (reads via docker-compose-suricata.yml).
       - ./suricata-rules:/app/suricata-rules
+      # suricata command socket directory (B1 auto-reload). Empty when running
+      # the main compose alone; populated by suricata in the -suricata variant.
+      - ./suricata-run:/var/run/suricata
     environment:
       TIMESCALE: ${TIMESCALE}
       W4RYA_TRAFFIC_DIR: ${TRAFFIC_DIR_DOCKER}

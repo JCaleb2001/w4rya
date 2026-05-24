@@ -301,6 +301,10 @@ export const w4ryaApi = createApi({
       }),
       invalidatesTags: ["Rules"],
     }),
+    reloadRules: builder.mutation<ReloadResponse, void>({
+      query: () => ({ url: "/rules/reload", method: "POST" }),
+      invalidatesTags: ["Rules"],
+    }),
 
     // --- notes per flow ---
     getNotes: builder.query<Note[], string>({
@@ -331,6 +335,7 @@ export interface GameConfig {
   team_id: string;
   visualizer_url: string;
   bpf: string;
+  rules_autoreload?: boolean;
 }
 
 export interface Team {
@@ -395,6 +400,17 @@ export interface RulesPayload {
   file: string;
   rules: Rule[];
   templates: RuleTemplate[];
+  suricata?: {
+    socket_available: boolean;
+    autoreload: boolean;
+  };
+}
+
+export interface ReloadResponse {
+  return?: string;
+  message?: string;
+  error?: string;
+  kind?: string;
 }
 
 export interface Note {
@@ -435,6 +451,7 @@ export const {
   useUpdateRuleMutation,
   useDeleteRuleMutation,
   useBlockIpMutation,
+  useReloadRulesMutation,
   useGetNotesQuery,
   useAddNoteMutation,
   useDeleteNoteMutation,

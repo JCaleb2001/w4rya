@@ -367,3 +367,47 @@ class Connection(psycopg.Connection):
         with self.cursor(row_factory=dict_row) as cursor:
             tags = cursor.execute("SELECT name FROM tag ORDER BY sort ASC").fetchall()
             return [t["name"] for t in tags]
+
+    def per_service_stats(self, time_start: datetime, services: list[dict]) -> list[dict]:
+        """Aggregate flow / attack / flag counts for each configured service.
+
+        We do one grouped scan over the flow table for the time window, then
+        align the (ip, port) result rows against the services config. Services
+        with zero matching flows still come back (with zero counters) so the
+        UI can show every chip consistently.
+        """
+        sql_query = """
+            SELECT ip_dst::text AS ip_dst,
+                   port_dst,
+                   count(*)                                              AS flows,
+                   sum(CASE WHEN jsonb_array_length(signatures) > 0
+                            THEN 1 ELSE 0 END)                           AS attacks,
+                   sum(flags_in)                                         AS flag_in,
+                   sum(flags_out)                                        AS flag_out
+            FROM flow
+            WHERE id > fid_pack_low(%(time_start)s)
+            GROUP BY ip_dst, port_dst
+        """
+        with self.cursor(row_factory=dict_row) as cursor:
+            rows = cursor.execute(sql_query, {"time_start": time_start}).fetchall()
+        # Index by (ip_string_no_prefix, port). ip_dst comes back as CIDR
+        # ('10.10.3.1/32'), strip the suffix to compare with the plain ips in
+        # the services config.
+        by_key: dict[tuple[str, int], dict] = {}
+        for r in rows:
+            ip_clean = str(r["ip_dst"]).split("/", 1)[0]
+            by_key[(ip_clean, int(r["port_dst"]))] = r
+
+        out: list[dict] = []
+        for s in services:
+            row = by_key.get((str(s.get("ip", "")), int(s.get("port", -1) or 0)))
+            out.append({
+                "name": s.get("name"),
+                "ip": s.get("ip"),
+                "port": s.get("port"),
+                "flows": int(row["flows"]) if row else 0,
+                "attacks": int(row["attacks"]) if row else 0,
+                "flag_in": int(row["flag_in"] or 0) if row else 0,
+                "flag_out": int(row["flag_out"] or 0) if row else 0,
+            })
+        return out

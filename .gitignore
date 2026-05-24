@@ -139,3 +139,7 @@ suricata
 
 # suricata rules — local team operational state, not committed
 /suricata-rules/*.rules
+
+# suricata runtime: command socket + pidfile, both runtime-only
+/suricata-run/*
+!/suricata-run/.gitkeep

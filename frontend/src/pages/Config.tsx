@@ -65,10 +65,12 @@ function GameForm() {
   }
 
   const RESTART = "⚠ restart assembler to fully apply";
-  const labels: Record<
+  // rules_autoreload is a boolean managed by the /rules page toggle; not
+  // shown in this text-input form.
+  const labels: Partial<Record<
     keyof GameConfig,
     { label: string; note?: string; type?: string }
-  > = {
+  >> = {
     flag_regex: { label: "flag regex", note: RESTART },
     tick_length: { label: "tick length (ms)", type: "number" },
     start_date: { label: "tick start (iso8601 utc)" },
@@ -87,31 +89,34 @@ function GameForm() {
       <div className="text-xs uppercase tracking-[0.25em] text-hax-muted border-b border-hax-border pb-2">
         ▎game
       </div>
-      {(Object.keys(labels) as (keyof GameConfig)[]).map((k) => (
-        <label key={k} className="flex flex-col gap-1">
-          <span className="text-[10px] uppercase tracking-[0.2em] text-hax-muted">
-            <span className="text-hax-accent-bright">$</span> {labels[k].label}
-            {labels[k].note && (
-              <span className="ml-2 text-hax-warning normal-case tracking-normal">
-                {labels[k].note}
-              </span>
-            )}
-          </span>
-          <input
-            type={labels[k].type ?? "text"}
-            value={(form[k] ?? "") as string | number}
-            onChange={(e) => {
-              const v =
-                labels[k].type === "number"
-                  ? Number(e.target.value)
-                  : e.target.value;
-              set(k, v as any);
-            }}
-            className="text-sm"
-            spellCheck={false}
-          />
-        </label>
-      ))}
+      {(Object.keys(labels) as (keyof GameConfig)[]).map((k) => {
+        const meta = labels[k]!;
+        return (
+          <label key={k} className="flex flex-col gap-1">
+            <span className="text-[10px] uppercase tracking-[0.2em] text-hax-muted">
+              <span className="text-hax-accent-bright">$</span> {meta.label}
+              {meta.note && (
+                <span className="ml-2 text-hax-warning normal-case tracking-normal">
+                  {meta.note}
+                </span>
+              )}
+            </span>
+            <input
+              type={meta.type ?? "text"}
+              value={(form[k] ?? "") as string | number}
+              onChange={(e) => {
+                const v =
+                  meta.type === "number"
+                    ? Number(e.target.value)
+                    : e.target.value;
+                set(k, v as any);
+              }}
+              className="text-sm"
+              spellCheck={false}
+            />
+          </label>
+        );
+      })}
 
       <ErrorOrSuccess error={error} ok={isSuccess && !saving} />
 
