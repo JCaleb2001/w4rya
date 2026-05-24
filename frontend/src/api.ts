@@ -502,6 +502,22 @@ export function hasRole(actual: Role | undefined, min: Role): boolean {
   return ROLE_RANK[actual] >= ROLE_RANK[min];
 }
 
+/**
+ * Hook: returns true if the current session user has at least the given role.
+ * Use this to gate UI affordances (disable / hide buttons) so users don't
+ * click into a 403. The backend is still the enforcement boundary.
+ */
+export function useCanRole(min: Role): boolean {
+  const { data } = useGetMeQuery();
+  return hasRole(data?.role, min);
+}
+
+/** Hook: just returns the current role string (or undefined while loading). */
+export function useMyRole(): Role | undefined {
+  const { data } = useGetMeQuery();
+  return data?.role;
+}
+
 export interface AuditEvent {
   id: string;
   when: string;

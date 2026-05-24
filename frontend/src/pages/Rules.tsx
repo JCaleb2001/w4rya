@@ -3,8 +3,10 @@ import {
   Rule,
   RuleTemplate,
   useAddRuleMutation,
+  useCanRole,
   useDeleteRuleMutation,
   useGetRulesQuery,
+  useMyRole,
   useReloadRulesMutation,
   useUpdateConfigMutation,
   useUpdateRuleMutation,
@@ -14,6 +16,8 @@ import { pushToast } from "../store/toasts";
 
 export function Rules() {
   const { data, isLoading, refetch } = useGetRulesQuery();
+  const canEdit = useCanRole("operator");
+  const role = useMyRole();
   const [editingSid, setEditingSid] = useState<number | null>(null);
   const [creating, setCreating] = useState<string | null>(null); // raw seed text
 
@@ -38,31 +42,44 @@ export function Rules() {
         <button onClick={() => refetch()} className="hax-btn text-[10px]">
           refresh
         </button>
-        <button
-          onClick={() => {
-            setCreating("");
-            setEditingSid(null);
-          }}
-          className="hax-btn hax-btn-primary text-xs"
-        >
-          + new rule
-        </button>
+        {canEdit && (
+          <button
+            onClick={() => {
+              setCreating("");
+              setEditingSid(null);
+            }}
+            className="hax-btn hax-btn-primary text-xs"
+          >
+            + new rule
+          </button>
+        )}
       </div>
+
+      {!canEdit && (
+        <div className="mb-4 text-[10px] uppercase tracking-wider text-hax-warning border border-hax-warning/40 bg-hax-warning/5 px-3 py-2 rounded-sm normal-case">
+          ⚠ read-only — your role is{" "}
+          <span className="font-bold">{role ?? "?"}</span>; editing rules
+          requires <span className="font-bold">operator</span> or higher.
+        </div>
+      )}
 
       <SuricataControlBar
         socketAvailable={data.suricata?.socket_available ?? false}
         autoreload={data.suricata?.autoreload ?? false}
+        canEdit={canEdit}
       />
 
-      <TemplatesBar
-        templates={data.templates}
-        onPick={(t) => {
-          setCreating(t.raw);
-          setEditingSid(null);
-        }}
-      />
+      {canEdit && (
+        <TemplatesBar
+          templates={data.templates}
+          onPick={(t) => {
+            setCreating(t.raw);
+            setEditingSid(null);
+          }}
+        />
+      )}
 
-      {creating !== null && (
+      {creating !== null && canEdit && (
         <NewRuleCard
           seed={creating}
           onCancel={() => setCreating(null)}
@@ -97,6 +114,7 @@ export function Rules() {
                 onToggleExpand={() =>
                   setEditingSid((prev) => (prev === r.sid ? null : r.sid))
                 }
+                canEdit={canEdit}
               />
             ))}
           </tbody>
@@ -109,9 +127,11 @@ export function Rules() {
 function SuricataControlBar({
   socketAvailable,
   autoreload,
+  canEdit,
 }: {
   socketAvailable: boolean;
   autoreload: boolean;
+  canEdit: boolean;
 }) {
   const dispatch = useAppDispatch();
   const [reload, { isLoading: reloading }] = useReloadRulesMutation();
@@ -169,10 +189,12 @@ function SuricataControlBar({
 
       <button
         onClick={doReload}
-        disabled={!socketAvailable || reloading}
+        disabled={!socketAvailable || reloading || !canEdit}
         className="hax-btn hax-btn-primary disabled:opacity-40 disabled:cursor-not-allowed"
         title={
-          socketAvailable
+          !canEdit
+            ? "requires operator role"
+            : socketAvailable
             ? "send reload-rules to suricata"
             : "suricata not running"
         }
@@ -180,18 +202,19 @@ function SuricataControlBar({
         {reloading ? "reloading…" : "▶ reload now"}
       </button>
 
-      <label className="flex items-center gap-2 cursor-pointer ml-auto">
+      <label className={`flex items-center gap-2 ml-auto ${canEdit ? "cursor-pointer" : "cursor-not-allowed opacity-50"}`}>
         <span className="text-hax-muted uppercase tracking-wider text-[10px]">
           auto-reload on save
         </span>
         <button
-          onClick={toggleAutoreload}
-          disabled={saving}
+          onClick={canEdit ? toggleAutoreload : undefined}
+          disabled={saving || !canEdit}
+          title={!canEdit ? "requires operator role" : undefined}
           className={`w-9 h-5 rounded-sm border transition-colors relative ${
             autoreload
               ? "bg-hax-accent border-hax-accent"
               : "bg-hax-bg border-hax-border"
-          }`}
+          } disabled:cursor-not-allowed`}
         >
           <div
             className={`absolute top-0.5 w-3.5 h-3.5 rounded-sm bg-hax-bg transition-transform ${
@@ -305,10 +328,12 @@ function RuleRow({
   rule,
   expanded,
   onToggleExpand,
+  canEdit,
 }: {
   rule: Rule;
   expanded: boolean;
   onToggleExpand: () => void;
+  canEdit: boolean;
 }) {
   const [update] = useUpdateRuleMutation();
   const [del, { isLoading: deleting }] = useDeleteRuleMutation();
@@ -330,13 +355,14 @@ function RuleRow({
       >
         <td className="py-2 px-3">
           <button
-            onClick={() => update({ sid: rule.sid, enabled: !rule.enabled })}
+            onClick={canEdit ? () => update({ sid: rule.sid, enabled: !rule.enabled }) : undefined}
+            disabled={!canEdit}
             className={`w-7 h-4 rounded-sm border transition-colors ${
               rule.enabled
                 ? "bg-hax-accent border-hax-accent"
                 : "bg-hax-bg border-hax-border"
-            }`}
-            title={rule.enabled ? "disable" : "enable"}
+            } disabled:opacity-50 disabled:cursor-not-allowed`}
+            title={!canEdit ? "requires operator role" : rule.enabled ? "disable" : "enable"}
           >
             <div
               className={`w-3 h-3 rounded-sm bg-hax-bg transition-transform ${
@@ -355,18 +381,25 @@ function RuleRow({
           </div>
         </td>
         <td className="py-2 px-3 flex gap-2">
-          <button onClick={onToggleExpand} className="hax-btn text-[10px]">
-            {expanded ? "close" : "edit"}
-          </button>
           <button
-            onClick={() => {
-              if (confirm(`delete rule sid=${rule.sid}?`)) del(rule.sid);
-            }}
-            disabled={deleting}
-            className="hax-btn text-[10px] text-hax-danger hover:border-hax-danger"
+            onClick={onToggleExpand}
+            disabled={!canEdit && !expanded}
+            className="hax-btn text-[10px] disabled:opacity-50 disabled:cursor-not-allowed"
+            title={!canEdit ? "viewer can browse but not edit" : undefined}
           >
-            {deleting ? "…" : "delete"}
+            {expanded ? "close" : canEdit ? "edit" : "view"}
           </button>
+          {canEdit && (
+            <button
+              onClick={() => {
+                if (confirm(`delete rule sid=${rule.sid}?`)) del(rule.sid);
+              }}
+              disabled={deleting}
+              className="hax-btn text-[10px] text-hax-danger hover:border-hax-danger"
+            >
+              {deleting ? "…" : "delete"}
+            </button>
+          )}
         </td>
       </tr>
       {expanded && (
@@ -381,21 +414,24 @@ function RuleRow({
               rows={3}
               spellCheck={false}
               className="w-full text-xs font-mono"
+              readOnly={!canEdit}
             />
             <div className="mt-2 flex gap-2">
-              <button
-                onClick={async () => {
-                  try {
-                    await update({ sid: rule.sid, raw: draft }).unwrap();
-                    onToggleExpand();
-                  } catch {}
-                }}
-                className="hax-btn hax-btn-primary"
-              >
-                save →
-              </button>
+              {canEdit && (
+                <button
+                  onClick={async () => {
+                    try {
+                      await update({ sid: rule.sid, raw: draft }).unwrap();
+                      onToggleExpand();
+                    } catch {}
+                  }}
+                  className="hax-btn hax-btn-primary"
+                >
+                  save →
+                </button>
+              )}
               <button onClick={onToggleExpand} className="hax-btn">
-                cancel
+                {canEdit ? "cancel" : "close"}
               </button>
             </div>
           </td>

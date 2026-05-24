@@ -26,7 +26,7 @@ import { useCopy } from "../hooks/useCopy";
 import { RadioGroup } from "../components/RadioGroup";
 import { ExploitModal } from "../components/ExploitModal";
 import { NotesPanel } from "../components/NotesPanel";
-import { useBlockIpMutation } from "../api";
+import { useBlockIpMutation, useCanRole } from "../api";
 import {
   useGetFlowQuery,
   useGetServicesQuery,
@@ -367,6 +367,8 @@ function formatIP(ip: string) {
 
 function BlockIpButton({ ip }: { ip: string }) {
   const [block, { isLoading, isSuccess, error, reset }] = useBlockIpMutation();
+  const canBlock = useCanRole("operator");
+  if (!canBlock) return null;
   return (
     <button
       onClick={async () => {
@@ -387,6 +389,20 @@ function BlockIpButton({ ip }: { ip: string }) {
       } disabled:opacity-50`}
     >
       {isLoading ? "…" : isSuccess ? "✓ blocked" : error ? "! err" : "block"}
+    </button>
+  );
+}
+
+function TestExploitButton({ onOpen }: { onOpen: () => void }) {
+  const canReplay = useCanRole("operator");
+  if (!canReplay) return null;
+  return (
+    <button
+      className="hax-btn hax-btn-primary"
+      onClick={onOpen}
+      title="Replay this flow against configured enemy teams"
+    >
+      ▶ test exploit
     </button>
   );
 }
@@ -714,13 +730,7 @@ export function FlowView() {
             {requestsCopyStatusText}
           </button>
 
-          <button
-            className="hax-btn hax-btn-primary"
-            onClick={() => setExploitOpen(true)}
-            title="Replay this flow against configured enemy teams"
-          >
-            ▶ test exploit
-          </button>
+          <TestExploitButton onOpen={() => setExploitOpen(true)} />
         </div>
       </div>
 
