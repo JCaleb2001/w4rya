@@ -1,3 +1,5 @@
+<img width="1024" height="1024" alt="logo" src="https://github.com/user-attachments/assets/5fa1d042-1b34-48e3-b57a-bce8755b43ec" />
+
 # w4rya
 
 `w4rya` is a hard fork of [Tulip](https://github.com/OpenAttackDefenseTools/tulip) — a network flow analyzer for Attack / Defense CTF competitions — adapted for internal team use.
