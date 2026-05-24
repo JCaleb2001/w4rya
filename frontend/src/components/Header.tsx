@@ -263,7 +263,7 @@ export function Header() {
   return (
     <>
       <Link to={`/?${searchParams}`}>
-        <div className="header-icon">🌷</div>
+        <div className="header-icon font-bold text-lg">w4rya</div>
       </Link>
       <div>
         <TextSearch></TextSearch>
