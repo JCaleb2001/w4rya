@@ -49,7 +49,7 @@ const baseQueryWithReauth: BaseQueryFn<
 
 export const w4ryaApi = createApi({
   baseQuery: baseQueryWithReauth,
-  tagTypes: ["Me", "Config", "Services", "Teams", "TickInfo", "FlagRegex"],
+  tagTypes: ["Me", "Config", "Services", "Teams", "TickInfo", "FlagRegex", "Rules"],
   endpoints: (builder) => ({
     getServices: builder.query<Service[], void>({
       query: () => "/services",
@@ -268,6 +268,39 @@ export const w4ryaApi = createApi({
     >({
       query: (body) => ({ url: "/attack/replay", method: "POST", body }),
     }),
+
+    // --- suricata rules ---
+    getRules: builder.query<RulesPayload, void>({
+      query: () => "/rules",
+      providesTags: ["Rules"],
+    }),
+    addRule: builder.mutation<Rule, { raw: string; enabled?: boolean }>({
+      query: (body) => ({ url: "/rules", method: "POST", body }),
+      invalidatesTags: ["Rules"],
+    }),
+    updateRule: builder.mutation<
+      Rule,
+      { sid: number; raw?: string; enabled?: boolean }
+    >({
+      query: ({ sid, ...body }) => ({
+        url: `/rules/${sid}`,
+        method: "PUT",
+        body,
+      }),
+      invalidatesTags: ["Rules"],
+    }),
+    deleteRule: builder.mutation<{ ok: boolean }, number>({
+      query: (sid) => ({ url: `/rules/${sid}`, method: "DELETE" }),
+      invalidatesTags: ["Rules"],
+    }),
+    blockIp: builder.mutation<Rule, string>({
+      query: (ip) => ({
+        url: "/rules/block-ip",
+        method: "POST",
+        body: { ip },
+      }),
+      invalidatesTags: ["Rules"],
+    }),
   }),
 });
 
@@ -318,6 +351,34 @@ export interface ReplayResponse {
   results: ReplayResult[];
 }
 
+export interface Rule {
+  sid: number;
+  enabled: boolean;
+  raw: string;
+  line_no?: number;
+  action?: string | null;
+  proto?: string | null;
+  src?: string | null;
+  sport?: string | null;
+  direction?: string | null;
+  dst?: string | null;
+  dport?: string | null;
+  msg?: string | null;
+  rev?: number | null;
+  parsed: boolean;
+}
+
+export interface RuleTemplate {
+  name: string;
+  raw: string;
+}
+
+export interface RulesPayload {
+  file: string;
+  rules: Rule[];
+  templates: RuleTemplate[];
+}
+
 export const {
   useGetServicesQuery,
   useGetFlagRegexQuery,
@@ -343,4 +404,9 @@ export const {
   useUpdateConfigTeamsMutation,
   useGetAttackPreviewQuery,
   useAttackReplayMutation,
+  useGetRulesQuery,
+  useAddRuleMutation,
+  useUpdateRuleMutation,
+  useDeleteRuleMutation,
+  useBlockIpMutation,
 } = w4ryaApi;

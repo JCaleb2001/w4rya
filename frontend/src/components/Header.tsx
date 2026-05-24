@@ -279,6 +279,11 @@ export function Header() {
           Config
         </div>
       </Link>
+      <Link to="/rules">
+        <div className="hax-btn">
+          Rules
+        </div>
+      </Link>
       <div className="ml-auto mr-4" style={{ display: "flex" }}>
         <div className="mr-4">
           <FirstDiff />

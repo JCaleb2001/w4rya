@@ -25,6 +25,7 @@ import { hexy } from "hexy";
 import { useCopy } from "../hooks/useCopy";
 import { RadioGroup } from "../components/RadioGroup";
 import { ExploitModal } from "../components/ExploitModal";
+import { useBlockIpMutation } from "../api";
 import {
   useGetFlowQuery,
   useGetServicesQuery,
@@ -363,6 +364,32 @@ function formatIP(ip: string) {
   return ip.includes(":") ? `[${ip}]` : ip;
 }
 
+function BlockIpButton({ ip }: { ip: string }) {
+  const [block, { isLoading, isSuccess, error, reset }] = useBlockIpMutation();
+  return (
+    <button
+      onClick={async () => {
+        if (!confirm(`Add a Suricata DROP rule for ${ip}?`)) return;
+        try {
+          await block(ip).unwrap();
+          setTimeout(() => reset(), 3000);
+        } catch {}
+      }}
+      disabled={isLoading}
+      title={`drop ip ${ip} via suricata`}
+      className={`ml-2 hax-btn text-[10px] ${
+        isSuccess
+          ? "border-hax-success text-hax-success"
+          : error
+          ? "border-hax-danger text-hax-danger"
+          : ""
+      } disabled:opacity-50`}
+    >
+      {isLoading ? "…" : isSuccess ? "✓ blocked" : error ? "! err" : "block"}
+    </button>
+  );
+}
+
 function FlowOverview({ flow }: { flow: FullFlow }) {
   let [searchParams, setSearchParams] = useSearchParams();
   const { unixTimeToTick } = getTickStuff();
@@ -468,6 +495,7 @@ function FlowOverview({ flow }: { flow: FullFlow }) {
                 <span>{formatIP(flow.src_ip)}</span>:
                 <span className="font-bold">{flow.src_port}</span>
               </div>
+              <BlockIpButton ip={flow.src_ip} />
               <span>-</span>
               <div>
                 <span>{formatIP(flow.dst_ip)}</span>:

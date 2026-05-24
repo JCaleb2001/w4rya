@@ -52,6 +52,7 @@ import database, json_util
 import auth
 import app_config
 import attack
+import rules
 
 application = Flask(__name__)
 
@@ -383,6 +384,77 @@ def attack_replay():
 
     result = attack.replay(flow, targets, timeout=timeout)
     return return_json_response(result)
+
+
+# --- /rules (suricata rules CRUD) ------------------------------------------
+
+@application.route("/rules")
+def list_rules():
+    try:
+        items = [r.to_dict() for r in rules.load()]
+    except OSError as e:
+        return jsonify({"error": f"rules file unreachable: {e}"}), 503
+    return return_json_response({
+        "file": rules.RULES_FILE,
+        "rules": items,
+        "templates": rules.TEMPLATES,
+    })
+
+
+@application.route("/rules", methods=["POST"])
+def add_rule():
+    body = request.get_json(silent=True) or {}
+    raw = (body.get("raw") or "").strip()
+    enabled = bool(body.get("enabled", True))
+    if not raw:
+        return jsonify({"error": "raw rule text required"}), 400
+    try:
+        rule = rules.add(raw, enabled=enabled)
+    except (ValueError, OSError) as e:
+        return jsonify({"error": str(e)}), 400
+    return return_json_response(rule.to_dict())
+
+
+@application.route("/rules/<int:sid>", methods=["PUT"])
+def update_rule(sid: int):
+    body = request.get_json(silent=True) or {}
+    raw = body.get("raw")
+    enabled = body.get("enabled")
+    try:
+        rule = rules.update_one(
+            sid,
+            raw=raw if raw is not None else None,
+            enabled=bool(enabled) if enabled is not None else None,
+        )
+    except (ValueError, OSError) as e:
+        return jsonify({"error": str(e)}), 400
+    if not rule:
+        return jsonify({"error": "rule not found"}), 404
+    return return_json_response(rule.to_dict())
+
+
+@application.route("/rules/<int:sid>", methods=["DELETE"])
+def delete_rule(sid: int):
+    try:
+        ok = rules.delete(sid)
+    except OSError as e:
+        return jsonify({"error": str(e)}), 500
+    if not ok:
+        return jsonify({"error": "rule not found"}), 404
+    return jsonify({"ok": True})
+
+
+@application.route("/rules/block-ip", methods=["POST"])
+def rules_block_ip():
+    body = request.get_json(silent=True) or {}
+    ip = (body.get("ip") or "").strip()
+    if not ip:
+        return jsonify({"error": "ip required"}), 400
+    try:
+        rule = rules.block_ip(ip)
+    except (ValueError, OSError) as e:
+        return jsonify({"error": str(e)}), 400
+    return return_json_response(rule.to_dict())
 
 
 @application.route("/attack/exploit-script/<flow_id>")

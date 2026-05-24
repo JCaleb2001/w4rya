@@ -54,6 +54,9 @@ services:
       # rw so the add_user.py bootstrap script can write users.yaml from
       # inside the container. The api code only reads it.
       - ./auth:/app/auth
+      # suricata rules editable from the UI. Mounted rw on both api (writes)
+      # and suricata (reads via docker-compose-suricata.yml).
+      - ./suricata-rules:/app/suricata-rules
     environment:
       TIMESCALE: ${TIMESCALE}
       W4RYA_TRAFFIC_DIR: ${TRAFFIC_DIR_DOCKER}

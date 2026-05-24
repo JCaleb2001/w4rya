@@ -17,6 +17,7 @@ import { DiffView } from "./pages/DiffView";
 import { Corrie } from "./components/Corrie";
 import { Login } from "./pages/Login";
 import { Config } from "./pages/Config";
+import { Rules } from "./pages/Rules";
 import { useGetMeQuery } from "./api";
 
 function RequireAuth({ children }: { children: JSX.Element }) {
@@ -78,6 +79,14 @@ function App() {
             element={
               <Suspense>
                 <Config />
+              </Suspense>
+            }
+          />
+          <Route
+            path="rules"
+            element={
+              <Suspense>
+                <Rules />
               </Suspense>
             }
           />
