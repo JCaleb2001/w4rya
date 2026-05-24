@@ -73,7 +73,9 @@ Frontend (React) ──(RTK Query)──> Flask API ──(SQL)──> Timescale
 - `frontend/src/pages/Home.tsx` — welcome screen + shortcut reference.
 - `frontend/src/pages/Login.tsx` — auth gate; rendered when RequireAuth sees 401.
 - `frontend/src/pages/Config.tsx` — /config route, three tabs: Game / Services / Teams.
-- `frontend/src/pages/Rules.tsx` — /rules route, Suricata rules CRUD + templates.
+- `frontend/src/pages/Rules.tsx` — /rules route, Suricata rules CRUD + templates + SuricataControlBar (reload + autoreload toggle).
+- `frontend/src/pages/Attacks.tsx` — /attacks route, chronological attack timeline (Suricata alerts + flag-out events).
+- `frontend/src/pages/Audit.tsx` — /audit route, admin-only audit log viewer.
 - `frontend/src/pages/FlowView.tsx` — flow detail view; toolbar includes Diff / pwntools / requests / Test Exploit; src_ip has a Block button.
 - `frontend/index.html` — entry HTML; favicon and title live here.
 - `frontend/public/logo.png` — brand asset, referenced by index.html / Header / Home.
@@ -113,9 +115,11 @@ These are load-bearing; changing them without coordination breaks things downstr
 
 Leave these alone unless we're doing an explicit cleanup pass; they don't affect the live stack.
 
-## Auth
+## Auth + roles (`auth.py`)
 
 Basic auth is enabled. The api requires a Flask session cookie for every endpoint except `/`, `/login`, `/logout`.
+
+**Roles** (B5): `viewer < operator < admin`. Stored per user in `auth/users.yaml` as `role:` field. Entries without `role` default to `admin` (back-compat for the bootstrap user); new users default to `viewer`. `@auth.requires_role("operator")` / `@auth.requires_role("admin")` decorators gate write endpoints — see "Permission matrix" below.
 
 - **Storage**: `auth/users.yaml` (gitignored). Schema: `users: { <name>: { password_hash: <bcrypt> } }`. Read by `services/api/auth.py` with mtime-based caching, so editing the file doesn't strictly require a restart, though `docker compose restart api` is safer.
 - **Cookie**: name `w4rya_session`, httpOnly, SameSite=Lax, Secure=False (flip to True when running behind HTTPS), 7-day lifetime. Signed with `W4RYA_SECRET_KEY` from `.env`.
@@ -125,10 +129,24 @@ Basic auth is enabled. The api requires a Flask session cookie for every endpoin
 ### Bootstrap a user
 
 ```
-docker compose run --rm api python /app/auth/add_user.py <username>
+docker compose run --rm api python /app/auth/add_user.py <username> [--role admin|operator|viewer]
 ```
 
-Prompts for password (getpass, no echo). Writes bcrypt cost-12 hash to `auth/users.yaml`. Then `docker compose restart api` (or just wait for the mtime cache to expire on next request).
+Prompts for password (getpass, no echo). Writes `{password_hash, role}` to `auth/users.yaml` (default role: viewer). Then `docker compose restart api` (or just wait for the mtime cache to expire on next request).
+
+### Permission matrix
+
+| Endpoint | viewer | operator | admin |
+|---|---|---|---|
+| GET (most) | ✓ | ✓ | ✓ |
+| POST /flow/<id>/notes | ✓ | ✓ | ✓ |
+| POST /star | ✗ | ✓ | ✓ |
+| POST/PUT/DELETE /rules, /rules/block-ip, /rules/reload | ✗ | ✓ | ✓ |
+| POST /attack/replay | ✗ | ✓ | ✓ |
+| PUT /config, /config/services, /config/teams | ✗ | ✗ | ✓ |
+| GET /audit | ✗ | ✗ | ✓ |
+
+403 responses include `{required_role, your_role}` so the UI can explain.
 
 Do NOT use `sudo` for the above — your user is in the `docker` group, and `sudo` makes `users.yaml` root-owned on the host (annoying to edit later). If you already did, `sudo chown -R $USER:$USER auth/` fixes it.
 
@@ -161,13 +179,15 @@ Endpoints:
 
 UI: `ExploitModal` opens from a "Test exploit" button in FlowView's secondary toolbar.
 
-## Suricata rules (`/rules` tab + quick-block)
+## Suricata rules (`/rules` tab + quick-block + auto-reload)
 
 Module `services/api/rules.py`. Stores rules as native Suricata text in `/app/suricata-rules/suricata.rules` (host: `./suricata-rules/`, mounted rw). 'Disabled' is the standard `# ` line prefix. Auto-assigned sids start at 1,000,000.
 
-Endpoints: `GET /rules` (list + templates), `POST /rules` (add), `PUT /rules/<sid>` (raw/enabled), `DELETE /rules/<sid>`, `POST /rules/block-ip { ip }` (quick-block writes a `drop ip <ip> any -> any any` rule).
+Endpoints: `GET /rules` (list + templates + suricata socket status), `POST /rules` (add), `PUT /rules/<sid>` (raw/enabled), `DELETE /rules/<sid>`, `POST /rules/block-ip { ip }` (quick-block writes a `drop ip <ip> any -> any any` rule), `POST /rules/reload` (B1, triggers Suricata reload-rules via its unix command socket).
 
-Reload is **manual** for now — `docker compose -f docker-compose-suricata.yml restart suricata` (the UI shows the command in a banner). Auto-reload (SIGUSR2 via docker.sock or a control FIFO) is a future sprint.
+**Auto-reload** (B1, `services/api/suricata_ctl.py`): when `rules_autoreload` config flag is on, every rules CRUD also calls `reload-rules` on Suricata's unix command socket (`/var/run/suricata/suricata-command.socket`). Requires Suricata to be running with `--set unix-command.enabled=yes` (already wired in `docker-compose-suricata.yml`). When suricata isn't running the api just attaches a `reload.kind=socket_missing` field to the save response — never fails the save.
+
+Socket lives on `./suricata-run/` (host) bind-mounted into both api and suricata containers, so the api can `AF_UNIX` connect to it without docker.sock or PID sharing.
 
 When running the suricata variant, the same `./suricata-rules/` dir is what api edits, but the suricata container expects rules under `${SURICATA_DIR_HOST}/lib/rules/`. Either align via a symlink or remount; this is left to the team's deploy.
 
@@ -179,16 +199,29 @@ Module `services/api/notes.py`. Table `flow_notes (id uuid pk, flow_id uuid, aut
 
 Client-only. `FlagLeakWatcher` polls `/query` with `tags_include=['flag-out']` every 15s, primes a seen-set on first load (no toasts for historical leaks), and dispatches a danger toast on every new id. Toasts render bottom-right via `Toasts.tsx`, dispatched through `store/toasts.ts`. To trigger one manually (debugging): `dispatch(pushToast({ message: 'hi', severity: 'danger' }))`.
 
-## Roadmap (planned, not yet implemented)
+## Per-service stats (B2)
 
-Phase A is done (Configs / Exploit testing / Multi-service filter / Suricata rules+block / Notes+alerts). Next ideas surface in the working brainstorm (this file's git log + the recent conversation):
+`GET /services/stats?ticks=N` (1..50, default 5) returns per-configured-service `{flows, attacks, flag_in, flag_out}` over the last N ticks. One grouped SQL scan, aligned by (ip, port) against the services config. Services with zero matching flows still appear with zeros.
 
-- **Auto-reload Suricata** when rules are saved (decide: SIGUSR2 via docker.sock vs control FIFO vs suricatasc).
-- **Per-service stats** badges on chip (`flows/tick`, attacks last 5 ticks, flags lost) — extends the multi-select.
-- **Attack timeline** — chronological Suricata alerts grouped by service+attacker.
-- **Loss attribution** — link a "lost flag at tick N" event from the scoreboard scraper to the flow that caused it.
-- **Roles + audit log** layered on the existing auth.
-- **Webhook to Discord/Slack** for critical toasts (server-side delivery instead of client).
+Frontend uses this to render mini-counts on each service chip in the sidebar — chip border cascades danger (flag-out) > warning (attacks) > violet (any flows) > dim (idle).
+
+## Attack timeline (B3, `/attacks`)
+
+`GET /attacks?from_tick=N&to_tick=M&service=NAME&limit=K`. Joins `flow` + signatures + flag-out tag. Returns chronological events with src/dst, service, type (`alert`|`flag_out`|`both`), rule msgs, flag count. Default window = last 10 ticks. Frontend `/attacks` route renders the table with range presets and a service filter dropdown.
+
+## Audit log (B5, `/audit`)
+
+Append-only table `audit_log (id, when_ts, actor, action, target, details jsonb)`. Module `services/api/audit.py` exposes `log(actor, action, target?, details?)` (fire-and-forget — failures never propagate) and `recent(limit)`. Hooked from every write endpoint: `auth.login`/`logout`/`login_fail`, `config.set`/`services`/`teams`, `rules.add`/`update`/`delete`/`block_ip`, `suricata.reload`, `attack.replay`. `GET /audit` is admin-only; frontend has a `/audit` page with a polling table.
+
+## Roadmap (next-up)
+
+Phase A and Phase B (auto-reload / per-service stats / attack timeline / roles+audit) are done. Open ideas:
+
+- **Webhook to Discord/Slack** — server-side delivery of critical events (flag-leak, new Suricata hit, config change). Skipped during Phase B at user request; design notes are in the conversation.
+- **Loss attribution** — link a "lost flag at tick N" scoreboard event to the flow that caused it (needs a scoreboard scraper).
 - **War-room mode** — fullscreen auto-rotating service-grid for a TV.
+- **Frontend role gating polish** — disable (rather than 403) write buttons in Config / Rules / FlowView based on `/me` role. Currently the backend is the enforcement boundary; UI just lets you click and surface the 403.
+- **Audit log filtering / export** — current `/audit` table is just chronological with hover-truncate details.
+- **Replay UX with tokenized flagids** — current exploit replay sends the captured bytes as-is, which works for stateless exploits but not for ones where the flagid was per-team. Plumb the per-team flagid from scoreboard into the script generator.
 
 When implementing, do read-only analysis first (the user usually asks) before touching code.
