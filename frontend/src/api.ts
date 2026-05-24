@@ -305,6 +305,10 @@ export const w4ryaApi = createApi({
       query: () => ({ url: "/rules/reload", method: "POST" }),
       invalidatesTags: ["Rules"],
     }),
+    getServicesStats: builder.query<ServicesStatsPayload, number | void>({
+      query: (ticks) => `/services/stats?ticks=${ticks ?? 5}`,
+      providesTags: ["Services"],
+    }),
 
     // --- notes per flow ---
     getNotes: builder.query<Note[], string>({
@@ -413,6 +417,23 @@ export interface ReloadResponse {
   kind?: string;
 }
 
+export interface ServiceStats {
+  name: string;
+  ip: string;
+  port: number;
+  flows: number;
+  attacks: number;
+  flag_in: number;
+  flag_out: number;
+}
+
+export interface ServicesStatsPayload {
+  ticks: number;
+  tick_length_ms: number;
+  from: string;
+  services: ServiceStats[];
+}
+
 export interface Note {
   id: string;
   flow_id: string;
@@ -452,6 +473,7 @@ export const {
   useDeleteRuleMutation,
   useBlockIpMutation,
   useReloadRulesMutation,
+  useGetServicesStatsQuery,
   useGetNotesQuery,
   useAddNoteMutation,
   useDeleteNoteMutation,

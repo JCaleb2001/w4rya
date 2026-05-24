@@ -32,6 +32,7 @@ import { Tag } from "./Tag";
 import {
   useGetFlowsQuery,
   useGetServicesQuery,
+  useGetServicesStatsQuery,
   useGetTagsQuery,
   useStarFlowMutation,
 } from "../api";
@@ -45,6 +46,11 @@ export function FlowList() {
 
   const { data: availableTags } = useGetTagsQuery();
   const { data: services } = useGetServicesQuery();
+  // Per-service stats over last 5 ticks. Polls every 15s; reused as a tag
+  // pressure indicator on each chip below.
+  const { data: serviceStats } = useGetServicesStatsQuery(5, {
+    pollingInterval: 15000,
+  });
 
   const filterFlags = useAppSelector((state) => state.filter.filterFlags);
   const filterFlagids = useAppSelector((state) => state.filter.filterFlagids);
@@ -296,27 +302,60 @@ export function FlowList() {
                 <div className="flex gap-1.5 flex-wrap">
                   {services.map((s) => {
                     const active = selected_service_names.includes(s.name);
-                    const count =
-                      flowData?.reduce(
-                        (n, f) =>
-                          f.dst_ip === s.ip && f.dst_port === s.port ? n + 1 : n,
-                        0
-                      ) ?? 0;
+                    const stats = serviceStats?.services.find(
+                      (st) => st.name === s.name && st.ip === s.ip && st.port === s.port
+                    );
+                    const danger = (stats?.flag_out ?? 0) > 0;
+                    const warning = (stats?.attacks ?? 0) > 0;
+                    const idle = (stats?.flows ?? 0) === 0;
+
+                    // Pressure border: red > amber > violet > dim
+                    let borderCls =
+                      "bg-hax-elev border-hax-border text-hax-muted hover:border-hax-accent-deep hover:text-hax-text";
+                    if (active) {
+                      borderCls =
+                        "bg-hax-accent-deep/30 border-hax-accent text-hax-accent-bright shadow-[0_0_8px_-3px_rgba(168,85,247,0.6)]";
+                    } else if (danger) {
+                      borderCls =
+                        "bg-hax-danger/10 border-hax-danger text-red-300 hover:bg-hax-danger/20 shadow-[0_0_8px_-3px_rgba(239,68,68,0.6)]";
+                    } else if (warning) {
+                      borderCls =
+                        "bg-hax-warning/10 border-hax-warning/60 text-hax-warning hover:border-hax-warning";
+                    } else if (!idle) {
+                      borderCls =
+                        "bg-hax-elev border-hax-accent-deep/40 text-hax-text hover:border-hax-accent";
+                    }
+
                     return (
                       <button
                         key={s.name + ":" + s.port}
                         onClick={() => toggleService(s.name)}
-                        className={`px-2 py-0.5 rounded-sm text-[10px] font-mono uppercase tracking-wider border transition-all ${
-                          active
-                            ? "bg-hax-accent-deep/30 border-hax-accent text-hax-accent-bright shadow-[0_0_8px_-3px_rgba(168,85,247,0.6)]"
-                            : "bg-hax-elev border-hax-border text-hax-muted hover:border-hax-accent-deep hover:text-hax-text"
-                        }`}
-                        title={`${s.ip}:${s.port}`}
+                        className={`px-2 py-0.5 rounded-sm text-[10px] font-mono uppercase tracking-wider border transition-all ${borderCls}`}
+                        title={
+                          stats
+                            ? `${s.ip}:${s.port}\nlast 5 ticks:\n  ${stats.flows} flows\n  ${stats.attacks} attacks\n  ${stats.flag_in} flag-in, ${stats.flag_out} flag-out`
+                            : `${s.ip}:${s.port}`
+                        }
                       >
                         {s.name}
                         <span className="ml-1 text-hax-dim">:{s.port}</span>
-                        {count > 0 && (
-                          <span className="ml-1.5 text-hax-accent-bright">{count}</span>
+                        {stats && stats.flows > 0 && (
+                          <span className="ml-1.5 text-hax-text">
+                            {stats.flows}f
+                          </span>
+                        )}
+                        {stats && stats.attacks > 0 && (
+                          <span className="ml-1 text-hax-warning" title={`${stats.attacks} attacks`}>
+                            ⚔{stats.attacks}
+                          </span>
+                        )}
+                        {stats && stats.flag_out > 0 && (
+                          <span
+                            className="ml-1 text-hax-danger hax-glow"
+                            title={`${stats.flag_out} flags leaked`}
+                          >
+                            🚩{stats.flag_out}
+                          </span>
                         )}
                       </button>
                     );
