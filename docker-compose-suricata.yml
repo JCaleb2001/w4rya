@@ -50,7 +50,9 @@ services:
       - internal
     volumes:
       - ${TRAFFIC_DIR_HOST}:${TRAFFIC_DIR_DOCKER}:ro
-      - ./auth:/app/auth:ro
+      # rw so the add_user.py bootstrap script can write users.yaml from
+      # inside the container. The api code only reads it.
+      - ./auth:/app/auth
     environment:
       TIMESCALE: ${TIMESCALE}
       W4RYA_TRAFFIC_DIR: ${TRAFFIC_DIR_DOCKER}
