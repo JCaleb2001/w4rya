@@ -75,7 +75,8 @@ Frontend (React) ──(RTK Query)──> Flask API ──(SQL)──> Timescale
 - `frontend/src/pages/Config.tsx` — /config route, three tabs: Game / Services / Teams.
 - `frontend/src/pages/Rules.tsx` — /rules route, Suricata rules CRUD + templates + SuricataControlBar (reload + autoreload toggle).
 - `frontend/src/pages/Attacks.tsx` — /attacks route, chronological attack timeline (Suricata alerts + flag-out events).
-- `frontend/src/pages/Audit.tsx` — /audit route, admin-only audit log viewer.
+- `frontend/src/pages/Audit.tsx` — /audit route, admin-only audit log viewer with filters + CSV export.
+- `frontend/src/pages/Warroom.tsx` — /warroom route, fullscreen TV mode (services grid + attack feed + top attackers + flag leaks).
 - `frontend/src/pages/FlowView.tsx` — flow detail view; toolbar includes Diff / pwntools / requests / Test Exploit; src_ip has a Block button.
 - `frontend/index.html` — entry HTML; favicon and title live here.
 - `frontend/public/logo.png` — brand asset, referenced by index.html / Header / Home.
@@ -209,19 +210,36 @@ Frontend uses this to render mini-counts on each service chip in the sidebar —
 
 `GET /attacks?from_tick=N&to_tick=M&service=NAME&limit=K`. Joins `flow` + signatures + flag-out tag. Returns chronological events with src/dst, service, type (`alert`|`flag_out`|`both`), rule msgs, flag count. Default window = last 10 ticks. Frontend `/attacks` route renders the table with range presets and a service filter dropdown.
 
-## Audit log (B5, `/audit`)
+## Audit log (B5+C3, `/audit`)
 
-Append-only table `audit_log (id, when_ts, actor, action, target, details jsonb)`. Module `services/api/audit.py` exposes `log(actor, action, target?, details?)` (fire-and-forget — failures never propagate) and `recent(limit)`. Hooked from every write endpoint: `auth.login`/`logout`/`login_fail`, `config.set`/`services`/`teams`, `rules.add`/`update`/`delete`/`block_ip`, `suricata.reload`, `attack.replay`. `GET /audit` is admin-only; frontend has a `/audit` page with a polling table.
+Append-only table `audit_log (id, when_ts, actor, action, target, details jsonb)`. Module `services/api/audit.py` exposes `log(actor, action, target?, details?)` (fire-and-forget — failures never propagate) and `recent(limit, after_ts?, actor?, action_prefix?)`. Hooked from every write endpoint: `auth.login`/`logout`/`login_fail`, `config.set`/`services`/`teams`, `rules.add`/`update`/`delete`/`block_ip`, `suricata.reload`, `attack.replay`.
+
+Endpoints (all admin-only):
+- `GET /audit?actor=&action=&from=&limit=` — filter by exact actor, action prefix (`rules.` → `rules.add|update|delete|block_ip`), or after-timestamp (ISO).
+- `GET /audit/actors` — distinct actor names (populates the UI dropdown).
+- `GET /audit/export.csv?<same filters>` — streams CSV with `Content-Disposition: attachment; filename=w4rya_audit_<UTC>.csv`. Cap 50k rows.
+
+Frontend `/audit` page has the filter bar + Export CSV anchor.
+
+## War-room TV mode (C2, `/warroom`)
+
+Fullscreen route OUTSIDE the main Layout (no header/sidebar). 2×2 panels: services-stats grid, live attack feed, top-attackers ranking, flag-leak cards. Top bar shows brand + current tick + tick-progress bar + wall clock. Auto-refresh every 10s. Designed for a TV mounted near the team during CTF. Still gated by RequireAuth.
+
+## Role-gated UI (C1)
+
+`useCanRole(min)` + `useMyRole()` hooks in `api.ts`. Each protected page reads the hook and:
+- shows a "read-only — your role is X; requires Y" banner at the top
+- disables save buttons / hides add+remove buttons
+- replaces `edit` with `view` (Rules) when role is below operator
+
+Backend remains the security boundary (403 with `{required_role, your_role}`); the UI hints are purely UX so users don't click into errors.
 
 ## Roadmap (next-up)
 
-Phase A and Phase B (auto-reload / per-service stats / attack timeline / roles+audit) are done. Open ideas:
+Phase A (operational features), Phase B (auto-reload / per-service stats / attack timeline / roles+audit), and Phase C (UI role-gating polish / war-room mode / audit filter+export) are done. Open ideas — these all need info from the user before starting:
 
-- **Webhook to Discord/Slack** — server-side delivery of critical events (flag-leak, new Suricata hit, config change). Skipped during Phase B at user request; design notes are in the conversation.
-- **Loss attribution** — link a "lost flag at tick N" scoreboard event to the flow that caused it (needs a scoreboard scraper).
-- **War-room mode** — fullscreen auto-rotating service-grid for a TV.
-- **Frontend role gating polish** — disable (rather than 403) write buttons in Config / Rules / FlowView based on `/me` role. Currently the backend is the enforcement boundary; UI just lets you click and surface the 403.
-- **Audit log filtering / export** — current `/audit` table is just chronological with hover-truncate details.
-- **Replay UX with tokenized flagids** — current exploit replay sends the captured bytes as-is, which works for stateless exploits but not for ones where the flagid was per-team. Plumb the per-team flagid from scoreboard into the script generator.
+- **Loss attribution / scoreboard scraper** — link a "lost flag at tick N" scoreboard event to the flow that caused it. Needs the CTF platform format (Faust, EnoEngine, iCTF, custom?) and scoreboard URL/auth.
+- **Replay with tokenized flagids** — current exploit replay sends captured bytes as-is, which works for stateless exploits but not for ones where the flagid was per-team. Needs FLAGID_ENDPOINT plumbing extended to swap per-team flagid before each replay target.
+- **Webhook to Discord/Slack** — server-side delivery of critical events. Explicitly skipped earlier; design notes still in the conversation.
 
 When implementing, do read-only analysis first (the user usually asks) before touching code.
