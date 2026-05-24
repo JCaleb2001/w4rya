@@ -20,11 +20,39 @@ function Flow(flow1: string, flow2: string) {
         newValue={flow2}
         splitView={true}
         showDiffOnly={false}
-        useDarkTheme={false}
+        useDarkTheme={true}
         hideLineNumbers={true}
         styles={{
           line: {
             wordBreak: "break-word",
+          },
+          variables: {
+            dark: {
+              diffViewerBackground: '#13131c',
+              diffViewerColor: '#e4e4ed',
+              addedBackground: 'rgba(34, 197, 94, 0.12)',
+              addedColor: '#86efac',
+              removedBackground: 'rgba(239, 68, 68, 0.12)',
+              removedColor: '#fca5a5',
+              wordAddedBackground: 'rgba(34, 197, 94, 0.3)',
+              wordRemovedBackground: 'rgba(239, 68, 68, 0.3)',
+              addedGutterBackground: 'rgba(34, 197, 94, 0.2)',
+              removedGutterBackground: 'rgba(239, 68, 68, 0.2)',
+              gutterBackground: '#1c1c28',
+              gutterBackgroundDark: '#13131c',
+              highlightBackground: 'rgba(168, 85, 247, 0.15)',
+              highlightGutterBackground: 'rgba(168, 85, 247, 0.25)',
+              codeFoldGutterBackground: '#1c1c28',
+              codeFoldBackground: '#1c1c28',
+              emptyLineBackground: '#0a0a0f',
+              gutterColor: '#5a5a72',
+              addedGutterColor: '#22c55e',
+              removedGutterColor: '#ef4444',
+              codeFoldContentColor: '#8888a0',
+              diffViewerTitleBackground: '#1c1c28',
+              diffViewerTitleColor: '#e4e4ed',
+              diffViewerTitleBorderColor: '#2a2a3a',
+            },
           },
         }}
       />
@@ -104,12 +132,12 @@ export function DiffView() {
 
   return (
     <div>
-      <div className="sticky shadow-md bg-white overflow-auto py-1 border-y flex items-center">
+      <div className="sticky shadow-md bg-hax-surface overflow-auto py-1 border-y border-hax-border flex items-center px-2">
         <RadioGroup
           options={displayOptions}
           value={displayOption}
           onChange={setDisplayOption}
-          className="flex gap-2 text-gray-800 text-sm mr-4"
+          className="flex gap-1.5 mr-4"
         />
       </div>
 

@@ -235,7 +235,7 @@ function Diff() {
 
   return (
     <button
-      className=" bg-amber-100 text-gray-800 rounded-md px-2 py-1"
+      className="hax-btn hax-btn-primary"
       onClick={() => {
         navigateToDiff()
       }}
@@ -263,9 +263,9 @@ export function Header() {
   return (
     <>
       <Link to={`/?${searchParams}`}>
-        <div className="header-icon flex items-center gap-2">
-          <img src="/logo.png" alt="w4rya" className="h-8 w-8" />
-          <span className="font-bold text-lg">w4rya</span>
+        <div className="header-icon">
+          <img src="/logo.png" alt="w4rya" className="h-7 w-7" />
+          <span className="brand text-base">w4rya</span>
         </div>
       </Link>
       <div>
@@ -284,14 +284,14 @@ export function Header() {
       </div>
       <div>
         <button
-          className=" bg-amber-100 text-gray-800 rounded-md px-2 py-1"
+          className="hax-btn hax-btn-primary"
           onClick={() => setToLastnTicks(5)}
         >
           Last 5 ticks
         </button>
       </div>
       <Link to={`/corrie?${searchParams}`}>
-        <div className="bg-blue-100 text-gray-800 rounded-md px-2 py-1">
+        <div className="hax-btn">
           Graph view
         </div>
       </Link>
@@ -308,7 +308,7 @@ export function Header() {
           </Suspense>
         </div>
         <div
-          className="ml-auto"
+          className="ml-auto text-xs uppercase tracking-[0.2em] font-mono"
           style={{
             display: "flex",
             justifyContent: "center",
@@ -316,7 +316,10 @@ export function Header() {
             flexDirection: "column",
           }}
         >
-          Current: {currentTick}
+          <span className="text-hax-muted">tick</span>
+          <span className="text-hax-accent-bright hax-glow text-lg leading-tight">
+            {currentTick}
+          </span>
         </div>
       </div>
     </>

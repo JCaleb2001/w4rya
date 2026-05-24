@@ -214,37 +214,37 @@ export function FlowList() {
   const [showFilters, setShowFilters] = useState(false);
 
   return (
-    <div className="flex flex-col h-full">
-      <div className="bg-white border-b-gray-300 border-b shadow-md flex flex-col">
-        <div className="p-2 flex" style={{ height: 50 }}>
+    <div className="flex flex-col h-full bg-hax-surface text-hax-text">
+      <div className="bg-hax-surface border-b border-hax-border flex flex-col">
+        <div className="p-2 flex items-center" style={{ height: 50 }}>
           <button
-            className="flex gap-1 items-center text-sm"
+            className="flex gap-1.5 items-center text-xs uppercase tracking-wider text-hax-muted hover:text-hax-accent-bright transition-colors"
             onClick={() => setShowFilters(!showFilters)}
           >
-            {<FilterIcon height={20} className="text-gray-400"></FilterIcon>}
+            {<FilterIcon height={16} className="text-hax-accent"></FilterIcon>}
             {showFilters ? "Close" : "Open"} filters
           </button>
           {/* Maybe we want to use a search button instead of live search */}
           {false && (
-            <button className="ml-auto items-center bg-blue-600 text-white px-2 rounded-md text-sm">
+            <button className="ml-auto items-center hax-btn hax-btn-primary">
               Search
             </button>
           )}
         </div>
         {showFilters && (
-          <div className="border-t-gray-300 border-t p-2">
-            <div className="flex">
-              <p className="text-sm font-bold text-gray-600 pb-2">
-                Intersection filter
+          <div className="border-t border-hax-border p-2 bg-hax-bg/60">
+            <div className="flex items-center mb-2">
+              <p className="text-[10px] uppercase tracking-[0.2em] font-bold text-hax-muted">
+                ▎intersection filter
               </p>
               <button
-                className="w-24 h-5 bg-blue-100 text-sm rounded-md ml-auto"
+                className="ml-auto hax-btn text-[10px]"
                 onClick={() => dispatch(toggleTagIntersectMode())}
               >
-                Mode:&nbsp;{tagIntersectionMode}
+                mode:&nbsp;<span className="text-hax-accent-bright">{tagIntersectionMode}</span>
               </button>
             </div>
-            <div className="flex gap-2 flex-wrap">
+            <div className="flex gap-1.5 flex-wrap">
               {(availableTags ?? []).map((tag) => (
                 <Tag
                   key={tag}
@@ -258,8 +258,11 @@ export function FlowList() {
           </div>
         )}
       </div>
-      <div></div>
-      { searchMessage && <div>{searchMessage}</div> }
+      { searchMessage && (
+        <div className="px-3 py-1 text-[10px] uppercase tracking-wider font-mono text-hax-muted bg-hax-bg/60 border-b border-hax-border">
+          <span className="text-hax-accent-bright">$</span> {searchMessage}
+        </div>
+      )}
       <Virtuoso
         className={classNames({
           "flex-1": true,
@@ -307,9 +310,9 @@ function FlowListEntry({ flow, isActive, onHeartClick }: FlowListEntryProps) {
 
   const duration =
     flow.duration > 10000 ? (
-      <div className="text-red-500">&gt;10s</div>
+      <div className="text-hax-danger font-mono">&gt;10s</div>
     ) : (
-      <div>{flow.duration}ms</div>
+      <div className="font-mono">{flow.duration}ms</div>
     );
   return (
     <li
@@ -326,33 +329,33 @@ function FlowListEntry({ flow, isActive, onHeartClick }: FlowListEntryProps) {
           }}
         >
           {isStarred ? (
-            <HeartIcon className="text-red-500" />
+            <HeartIcon className="text-hax-accent-bright" style={{ filter: 'drop-shadow(0 0 4px rgba(192,132,252,0.7))' }} />
           ) : (
-            <EmptyHeartIcon />
+            <EmptyHeartIcon className="text-hax-dim" />
           )}
         </div>
 
         <div className="w-5 mr-2 self-center shrink-0">
           {flow.child_id != null || flow.parent_id != null ? (
-            <LinkIcon className="text-blue-500" />
+            <LinkIcon className="text-hax-accent" />
           ) : undefined}
         </div>
         <div className="flex-1 shrink">
           <div className="flex">
             <div className="shrink-0">
-              <span className="text-gray-700 font-bold overflow-ellipsis overflow-hidden ">
+              <span className="text-hax-text font-bold overflow-ellipsis overflow-hidden uppercase tracking-wide text-xs">
                 {flow.service_tag}
               </span>
-              <span className="text-gray-500">:{flow.dst_port}</span>
+              <span className="text-hax-muted font-mono">:{flow.dst_port}</span>
             </div>
 
-            <div className="ml-2">
-              <span className="text-gray-500">{formatted_time_h_m_s}</span>
-              <span className="text-gray-300">{formatted_time_ms}</span>
+            <div className="ml-2 font-mono">
+              <span className="text-hax-muted">{formatted_time_h_m_s}</span>
+              <span className="text-hax-dim">{formatted_time_ms}</span>
             </div>
-            <div className="text-gray-500 ml-auto">{duration}</div>
+            <div className="text-hax-muted ml-auto">{duration}</div>
           </div>
-          <div className="flex gap-2 flex-wrap">
+          <div className="flex gap-1.5 flex-wrap mt-1">
             {filtered_tag_list.map((tag) => (
               <Tag key={tag} tag={tag}></Tag>
             ))}

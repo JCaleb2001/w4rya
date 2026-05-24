@@ -67,8 +67,8 @@ export const Corrie = () => {
     setSearchParams(searchParams);
   };
 
-  const inactiveButtonClass = "bg-blue-100 text-gray-800 rounded-md px-2 py-1";
-  const activeButtonClass = `${inactiveButtonClass} ring-2 ring-gray-500`;
+  const inactiveButtonClass = "hax-btn";
+  const activeButtonClass = "hax-btn hax-btn-primary";
 
   const navigate = useNavigate();
   const onClickNavigate = useCallback(
@@ -148,10 +148,12 @@ export const Corrie = () => {
   };
 
   return (
-    <div className="flex flex-col h-full">
-      <div className="text-sm bg-white border-b-gray-300 border-b shadow-md flex flex-col">
-        <div className="p-2 flex space-x-2" style={{ height: 50 }}>
-          <a className="text-center px-2 py-2">Correlation mode: </a>
+    <div className="flex flex-col h-full bg-hax-bg text-hax-text">
+      <div className="text-sm bg-hax-surface border-b border-hax-border flex flex-col">
+        <div className="p-2 flex items-center space-x-2" style={{ height: 50 }}>
+          <a className="text-center px-2 py-2 text-xs uppercase tracking-wider text-hax-muted">
+            <span className="text-hax-accent-bright">▎</span>correlation mode:
+          </a>
           <button
             className={mode == "time" ? activeButtonClass : inactiveButtonClass}
             onClick={() => setCorrelationMode("time")}
@@ -190,7 +192,9 @@ export const Corrie = () => {
           >
             under attack
           </button>
-          <p className="text-left px-2 py-2">After clicking on a flow, press 'w' to scroll to it in flow list</p>
+          <p className="text-left px-2 py-2 text-xs text-hax-dim ml-auto">
+            <span className="text-hax-accent-bright">$</span> click a flow, then press <kbd className="bg-hax-elev px-1.5 py-0.5 rounded-sm border border-hax-border text-hax-accent-bright mx-0.5">w</kbd> to scroll to it
+          </p>
         </div>
       </div>
       <div className="flex-1 w-full overflow-hidden p-4">
@@ -267,7 +271,10 @@ function BarPerTickGraph(graphProps: GraphProps, mode: string) {
         }
       }
     },
+    theme: { mode: 'dark' },
     chart: {
+      background: 'transparent',
+      foreColor: '#8888a0',
       animations: {
         enabled: false
       },
@@ -368,7 +375,10 @@ function TimePacketGraph(graphProps: GraphProps) {
     labels: flowList.map((flow) => {
       return flow.id;
     }),
+    theme: { mode: 'dark' },
     chart: {
+      background: 'transparent',
+      foreColor: '#8888a0',
       animations: {
         enabled: false,
       },
@@ -458,7 +468,10 @@ function VolumeGraph(graphProps: GraphProps) {
     labels: flowList.map((flow) => {
       return flow.id;
     }),
+    theme: { mode: 'dark' },
     chart: {
+      background: 'transparent',
+      foreColor: '#8888a0',
       animations: {
         enabled: false,
       },
@@ -514,7 +527,10 @@ function UnderAttackGraph(graphProps: GraphProps) {
     yaxis: {
       tickAmount: 0,
     },
+    theme: { mode: 'dark' },
     chart: {
+      background: 'transparent',
+      foreColor: '#8888a0',
       animations: {
         enabled: false,
       },
