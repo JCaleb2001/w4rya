@@ -289,6 +289,11 @@ export function Header() {
           Attacks
         </div>
       </Link>
+      <Link to="/warroom">
+        <div className="hax-btn" title="fullscreen TV mode">
+          War room
+        </div>
+      </Link>
       <Link to="/config">
         <div className="hax-btn">
           Config

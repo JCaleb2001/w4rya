@@ -20,6 +20,7 @@ import { Config } from "./pages/Config";
 import { Rules } from "./pages/Rules";
 import { Attacks } from "./pages/Attacks";
 import { Audit } from "./pages/Audit";
+import { Warroom } from "./pages/Warroom";
 import { useGetMeQuery } from "./api";
 import { Toasts } from "./components/Toasts";
 import { FlagLeakWatcher } from "./components/FlagLeakWatcher";
@@ -45,6 +46,14 @@ function App() {
     <BrowserRouter>
       <Routes>
         <Route path="/login" element={<Login />} />
+        <Route
+          path="/warroom"
+          element={
+            <RequireAuth>
+              <Warroom />
+            </RequireAuth>
+          }
+        />
         <Route
           path="/"
           element={
