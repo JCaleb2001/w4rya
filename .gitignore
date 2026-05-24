@@ -133,3 +133,6 @@ workspace.xml
 
 /traffic
 suricata
+
+# auth: bcrypt password hashes — never commit
+/auth/users.yaml

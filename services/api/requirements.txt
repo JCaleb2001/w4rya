@@ -4,3 +4,5 @@ requests
 gunicorn
 python-dateutil
 psycopg[binary,pool]
+bcrypt
+PyYAML

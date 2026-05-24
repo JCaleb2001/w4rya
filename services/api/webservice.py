@@ -27,7 +27,7 @@ import os
 import re
 import traceback
 import uuid
-from flask import Flask, Response, send_file
+from flask import Flask, Response, send_file, jsonify, session
 from requests import get
 import dateutil.parser
 from ipaddress import ip_network
@@ -49,10 +49,31 @@ from flask import request
 
 from flow2pwn import flow2pwn
 import database, json_util
+import auth
 
 application = Flask(__name__)
-CORS(application)
+
+_secret = os.environ.get("W4RYA_SECRET_KEY")
+if not _secret:
+    raise RuntimeError(
+        "W4RYA_SECRET_KEY env var is required (generate with: openssl rand -hex 32)"
+    )
+application.secret_key = _secret
+application.config.update(
+    SESSION_COOKIE_NAME="w4rya_session",
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+    SESSION_COOKIE_SECURE=False,  # set true when behind HTTPS
+    PERMANENT_SESSION_LIFETIME=60 * 60 * 24 * 7,  # 7 days
+)
+
+CORS(application, supports_credentials=True)
 db = database.Pool(os.environ["TIMESCALE"])
+
+
+@application.before_request
+def _auth_guard():
+    return auth.require_auth()
 
 
 def return_json_response(object, **kwargs):
@@ -66,6 +87,32 @@ def return_text_response(object, **kwargs):
 @application.route("/")
 def hello_world():
     return "Hello, World!"
+
+
+@application.route("/login", methods=["POST"])
+def login():
+    data = request.get_json(silent=True) or {}
+    username = (data.get("username") or "").strip()
+    password = data.get("password") or ""
+    if not username or not password:
+        return jsonify({"error": "username and password required"}), 400
+    if not auth.verify_password(username, password):
+        return jsonify({"error": "invalid credentials"}), 401
+    session.clear()
+    session["user"] = username
+    session.permanent = True
+    return jsonify({"user": username})
+
+
+@application.route("/logout", methods=["POST"])
+def logout():
+    session.clear()
+    return jsonify({"ok": True})
+
+
+@application.route("/me")
+def me():
+    return jsonify({"user": auth.current_user()})
 
 
 @application.route("/tick_info")
