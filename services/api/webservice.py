@@ -51,6 +51,7 @@ from flow2pwn import flow2pwn
 import database, json_util
 import auth
 import app_config
+import attack
 
 application = Flask(__name__)
 
@@ -294,6 +295,95 @@ def putConfigTeams():
         return jsonify({"error": str(e)}), 400
     app_config.set("teams", validated)
     return return_json_response(validated)
+
+
+# --- /attack (exploit replay + script export) ------------------------------
+
+@application.route("/attack/preview/<flow_id>")
+def attack_preview(flow_id):
+    """Cheap precheck shown in the Test-Exploit modal before firing."""
+    try:
+        fid = uuid.UUID(flow_id)
+    except ValueError:
+        return jsonify({"error": "invalid flow id"}), 400
+    with db.connection() as c:
+        flow = c.flow_detail(fid)
+    if not flow:
+        return jsonify({"error": "flow not found"}), 404
+    payload = attack.build_payload(flow)
+    return return_json_response({
+        "flow_id": str(flow.id),
+        "port": int(flow.port_dst),
+        "src_ip": str(flow.ip_src),
+        "dst_ip": str(flow.ip_dst),
+        "payload_size": len(payload),
+        "client_items": sum(1 for i in flow.items if i.direction == "c" and i.kind == "raw"),
+        "server_items": sum(1 for i in flow.items if i.direction == "s" and i.kind == "raw"),
+    })
+
+
+@application.route("/attack/replay", methods=["POST"])
+def attack_replay():
+    body = request.get_json(silent=True) or {}
+    raw_flow_id = body.get("flow_id") or ""
+    try:
+        fid = uuid.UUID(raw_flow_id)
+    except (ValueError, TypeError):
+        return jsonify({"error": "invalid flow id"}), 400
+
+    targets_in = body.get("targets")
+    if not isinstance(targets_in, list) or not targets_in:
+        return jsonify({"error": "targets must be a non-empty list"}), 400
+
+    targets: list[dict] = []
+    for t in targets_in:
+        if isinstance(t, str):
+            targets.append({"name": t, "ip": t})
+        elif isinstance(t, dict) and t.get("ip"):
+            targets.append({
+                "name": str(t.get("name") or t["ip"]),
+                "ip": str(t["ip"]),
+            })
+
+    timeout = body.get("timeout")
+    try:
+        timeout = float(timeout) if timeout is not None else attack.DEFAULT_TIMEOUT
+    except (TypeError, ValueError):
+        timeout = attack.DEFAULT_TIMEOUT
+
+    with db.connection() as c:
+        flow = c.flow_detail(fid)
+    if not flow:
+        return jsonify({"error": "flow not found"}), 404
+
+    result = attack.replay(flow, targets, timeout=timeout)
+    return return_json_response(result)
+
+
+@application.route("/attack/exploit-script/<flow_id>")
+def attack_exploit_script(flow_id):
+    try:
+        fid = uuid.UUID(flow_id)
+    except ValueError:
+        return return_text_response("# error: invalid flow id"), 400
+    with db.connection() as c:
+        flow = c.flow_detail(fid)
+    if not flow:
+        return return_text_response("# error: flow not found"), 404
+
+    teams = app_config.get("teams") or []
+    try:
+        timeout = float(request.args.get("timeout", attack.DEFAULT_TIMEOUT))
+    except (TypeError, ValueError):
+        timeout = attack.DEFAULT_TIMEOUT
+    script = attack.generate_script(flow, teams, timeout=timeout)
+    return Response(
+        script,
+        mimetype="text/x-python",
+        headers={
+            "Content-Disposition": f'attachment; filename="w4rya_exploit_{flow_id}.py"'
+        },
+    )
 
 
 @application.route("/flow/<id>")

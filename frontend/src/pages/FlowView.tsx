@@ -24,6 +24,7 @@ import { format } from "date-fns";
 import { hexy } from "hexy";
 import { useCopy } from "../hooks/useCopy";
 import { RadioGroup } from "../components/RadioGroup";
+import { ExploitModal } from "../components/ExploitModal";
 import {
   useGetFlowQuery,
   useGetServicesQuery,
@@ -534,6 +535,7 @@ export function FlowView() {
 
   // TODO: account for user scrolling - update currentFlow accordingly
   const [currentFlow, setCurrentFlow] = useState<number>(-1);
+  const [exploitOpen, setExploitOpen] = useState(false);
 
   // reset scroll on flow switch
   useHotkeys('j', () => setCurrentFlow(0))
@@ -682,8 +684,20 @@ export function FlowView() {
           >
             {requestsCopyStatusText}
           </button>
+
+          <button
+            className="hax-btn hax-btn-primary"
+            onClick={() => setExploitOpen(true)}
+            title="Replay this flow against configured enemy teams"
+          >
+            ▶ test exploit
+          </button>
         </div>
       </div>
+
+      {exploitOpen && id && (
+        <ExploitModal flowId={id} onClose={() => setExploitOpen(false)} />
+      )}
 
       {flow ? <FlowOverview flow={flow}></FlowOverview> : undefined}
       {flow?.flow[(reprId < flow?.flow.length) ? reprId : 0].flow.map((flow_data, i, a) => {

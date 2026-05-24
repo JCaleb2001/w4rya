@@ -257,6 +257,17 @@ export const w4ryaApi = createApi({
       query: (body) => ({ url: "/config/teams", method: "PUT", body }),
       invalidatesTags: ["Teams"],
     }),
+
+    // --- attack / exploit replay ---
+    getAttackPreview: builder.query<AttackPreview, string>({
+      query: (flow_id) => `/attack/preview/${flow_id}`,
+    }),
+    attackReplay: builder.mutation<
+      ReplayResponse,
+      { flow_id: string; targets: { name: string; ip: string }[]; timeout?: number }
+    >({
+      query: (body) => ({ url: "/attack/replay", method: "POST", body }),
+    }),
   }),
 });
 
@@ -275,6 +286,36 @@ export interface Team {
   name: string;
   ip: string;
   notes?: string;
+}
+
+export interface AttackPreview {
+  flow_id: string;
+  port: number;
+  src_ip: string;
+  dst_ip: string;
+  payload_size: number;
+  client_items: number;
+  server_items: number;
+}
+
+export interface ReplayResult {
+  team_name: string;
+  target_ip: string;
+  ok: boolean;
+  latency_ms?: number;
+  response_size?: number;
+  response_excerpt?: string;
+  flags?: string[];
+  flag_count?: number;
+  error?: string;
+}
+
+export interface ReplayResponse {
+  flow_id: string;
+  port: number;
+  payload_size: number;
+  timeout_s?: number;
+  results: ReplayResult[];
 }
 
 export const {
@@ -300,4 +341,6 @@ export const {
   useUpdateConfigServicesMutation,
   useGetConfigTeamsQuery,
   useUpdateConfigTeamsMutation,
+  useGetAttackPreviewQuery,
+  useAttackReplayMutation,
 } = w4ryaApi;
