@@ -3,17 +3,17 @@ import { setupListeners } from "@reduxjs/toolkit/query";
 import { useDispatch, useSelector } from "react-redux";
 import type { TypedUseSelectorHook } from "react-redux";
 
-import { tulipApi } from "../api";
+import { w4ryaApi } from "../api";
 
 import filterReducer from "./filter";
 
 export const store = configureStore({
   reducer: {
-    [tulipApi.reducerPath]: tulipApi.reducer,
+    [w4ryaApi.reducerPath]: w4ryaApi.reducer,
     filter: filterReducer,
   },
   middleware: (getDefaultMiddleware) =>
-    getDefaultMiddleware().concat(tulipApi.middleware),
+    getDefaultMiddleware().concat(w4ryaApi.middleware),
 });
 
 setupListeners(store.dispatch);
