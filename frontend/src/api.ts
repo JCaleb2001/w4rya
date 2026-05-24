@@ -49,13 +49,15 @@ const baseQueryWithReauth: BaseQueryFn<
 
 export const w4ryaApi = createApi({
   baseQuery: baseQueryWithReauth,
-  tagTypes: ["Me"],
+  tagTypes: ["Me", "Config", "Services", "Teams", "TickInfo", "FlagRegex"],
   endpoints: (builder) => ({
     getServices: builder.query<Service[], void>({
       query: () => "/services",
+      providesTags: ["Services"],
     }),
     getFlagRegex: builder.query<string, void>({
       query: () => "/flag_regex",
+      providesTags: ["FlagRegex"],
     }),
     getFlow: builder.query<FullFlow, string>({
       query: (id) => `/flow/${id}`,
@@ -146,6 +148,7 @@ export const w4ryaApi = createApi({
     }),
     getTickInfo: builder.query<TickInfo, void>({
       query: () => `/tick_info`,
+      providesTags: ["TickInfo"],
     }),
     getUnderAttack: builder.query<TicksAttackInfo, TicksAttackQuery>({
       query: (query) => ({
@@ -228,8 +231,51 @@ export const w4ryaApi = createApi({
       query: () => ({ url: "/logout", method: "POST" }),
       invalidatesTags: ["Me"],
     }),
+
+    // --- runtime config ---
+    getConfig: builder.query<GameConfig, void>({
+      query: () => "/config",
+      providesTags: ["Config"],
+    }),
+    updateConfig: builder.mutation<GameConfig, Partial<GameConfig>>({
+      query: (body) => ({ url: "/config", method: "PUT", body }),
+      invalidatesTags: ["Config", "TickInfo", "FlagRegex"],
+    }),
+    getConfigServices: builder.query<Service[], void>({
+      query: () => "/config/services",
+      providesTags: ["Services"],
+    }),
+    updateConfigServices: builder.mutation<Service[], Service[]>({
+      query: (body) => ({ url: "/config/services", method: "PUT", body }),
+      invalidatesTags: ["Services"],
+    }),
+    getConfigTeams: builder.query<Team[], void>({
+      query: () => "/config/teams",
+      providesTags: ["Teams"],
+    }),
+    updateConfigTeams: builder.mutation<Team[], Team[]>({
+      query: (body) => ({ url: "/config/teams", method: "PUT", body }),
+      invalidatesTags: ["Teams"],
+    }),
   }),
 });
+
+export interface GameConfig {
+  flag_regex: string;
+  tick_length: number;
+  start_date: string;
+  flag_lifetime: number;
+  vm_ip: string;
+  team_id: string;
+  visualizer_url: string;
+  bpf: string;
+}
+
+export interface Team {
+  name: string;
+  ip: string;
+  notes?: string;
+}
 
 export const {
   useGetServicesQuery,
@@ -248,4 +294,10 @@ export const {
   useGetMeQuery,
   useLoginMutation,
   useLogoutMutation,
+  useGetConfigQuery,
+  useUpdateConfigMutation,
+  useGetConfigServicesQuery,
+  useUpdateConfigServicesMutation,
+  useGetConfigTeamsQuery,
+  useUpdateConfigTeamsMutation,
 } = w4ryaApi;

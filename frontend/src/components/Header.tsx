@@ -319,6 +319,11 @@ export function Header() {
           Graph view
         </div>
       </Link>
+      <Link to="/config">
+        <div className="hax-btn">
+          Config
+        </div>
+      </Link>
       <div className="ml-auto mr-4" style={{ display: "flex" }}>
         <div className="mr-4">
           <FirstDiff />

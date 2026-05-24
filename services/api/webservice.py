@@ -50,6 +50,7 @@ from flask import request
 from flow2pwn import flow2pwn
 import database, json_util
 import auth
+import app_config
 
 application = Flask(__name__)
 
@@ -118,9 +119,9 @@ def me():
 @application.route("/tick_info")
 def getTickInfo():
     data = {
-        "startDate": start_date,
-        "tickLength": tick_length,
-        "flagLifetime": flag_lifetime,
+        "startDate": app_config.get("start_date"),
+        "tickLength": app_config.get("tick_length"),
+        "flagLifetime": app_config.get("flag_lifetime"),
     }
     return return_json_response(data)
 
@@ -184,8 +185,11 @@ def getStats():
 
 @application.route("/under_attack")
 def getUnderAttack():
+    vu = app_config.get("visualizer_url") or ""
+    if not vu:
+        return return_json_response({})
     res = get(
-        f"{visualizer_url}/api/under-attack",
+        f"{vu}/api/under-attack",
         params={
             "from_tick": request.args.get("from_tick"),
             "to_tick": request.args.get("to_tick"),
@@ -216,12 +220,80 @@ def setStar():
 
 @application.route("/services")
 def getServices():
-    return return_json_response(services)
+    return return_json_response(app_config.get("services"))
 
 
 @application.route("/flag_regex")
 def getFlagRegex():
-    return return_json_response(flag_regex)
+    return return_json_response(app_config.get("flag_regex"))
+
+
+# --- /config (runtime-editable settings) -----------------------------------
+
+def _config_payload() -> dict:
+    return {k: app_config.get(k) for k in app_config.SCALAR_KEYS}
+
+
+@application.route("/config")
+def getConfig():
+    return return_json_response(_config_payload())
+
+
+@application.route("/config", methods=["PUT"])
+def putConfig():
+    data = request.get_json(silent=True) or {}
+    if not isinstance(data, dict):
+        return jsonify({"error": "expected an object"}), 400
+    errors = {}
+    for key, raw in data.items():
+        if key not in app_config.SCALAR_KEYS:
+            errors[key] = "unknown key"
+            continue
+        try:
+            value = app_config.coerce_scalar(key, raw)
+        except (TypeError, ValueError) as e:
+            errors[key] = str(e)
+            continue
+        app_config.set(key, value)
+    if errors:
+        return jsonify({"error": "invalid fields", "fields": errors}), 400
+    return return_json_response(_config_payload())
+
+
+@application.route("/config/services")
+def getConfigServices():
+    return return_json_response(app_config.get("services"))
+
+
+@application.route("/config/services", methods=["PUT"])
+def putConfigServices():
+    data = request.get_json(silent=True)
+    if not isinstance(data, list):
+        return jsonify({"error": "expected a list"}), 400
+    try:
+        validated = [app_config.validate_service(e) for e in data]
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    app_config.set("services", validated)
+    return return_json_response(validated)
+
+
+@application.route("/config/teams")
+def getConfigTeams():
+    return return_json_response(app_config.get("teams"))
+
+
+@application.route("/config/teams", methods=["PUT"])
+def putConfigTeams():
+    data = request.get_json(silent=True)
+    if not isinstance(data, list):
+        return jsonify({"error": "expected a list"}), 400
+    try:
+        validated = [app_config.validate_team(e) for e in data]
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    app_config.set("teams", validated)
+    return return_json_response(validated)
 
 
 @application.route("/flow/<id>")
@@ -352,6 +424,8 @@ def downloadFile():
 
 def create_app():
     db.open()
+    app_config.set_pool(db)
+    app_config.init_schema()
     return application
 
 if __name__ == "__main__":

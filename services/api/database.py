@@ -17,6 +17,7 @@ import psycopg_pool
 from psycopg import sql
 from psycopg.rows import class_row, dict_row
 
+import app_config
 import configurations
 from json_util import JsonFactory
 
@@ -286,8 +287,8 @@ class Connection(psycopg.Connection):
 
     def stats_query(self, query: StatsQuery) -> dict[int, Stats]:
         now = datetime.now(tz=timezone.utc)
-        tick_first = dateutil.parser.parse(configurations.start_date)
-        tick_length = timedelta(milliseconds=int(configurations.tick_length))
+        tick_first = dateutil.parser.parse(app_config.get("start_date"))
+        tick_length = timedelta(milliseconds=int(app_config.get("tick_length")))
         tick_current = ((now - tick_first) // tick_length) + 1
         tick_start = query.tick_from if query.tick_from else 0
         tick_end = query.tick_to if query.tick_to else tick_current
