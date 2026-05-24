@@ -60,12 +60,21 @@ Frontend (React) ──(RTK Query)──> Flask API ──(SQL)──> Timescale
 ## Key frontend files
 
 - `frontend/src/api.ts` — the **w4ryaApi** RTK Query slice. All backend calls live here; if you add an API endpoint server-side, register a query/mutation here.
-- `frontend/src/store/index.ts` — Redux store config (mounts `w4ryaApi.reducer` + filter slice).
+- `frontend/src/store/index.ts` — Redux store config (`w4ryaApi.reducer`, `filter`, `toasts`).
 - `frontend/src/store/filter.ts` — `W4ryaFilterState` (tag include/exclude, flag/flagid filters, AND/OR intersection mode).
-- `frontend/src/components/Header.tsx` — top bar: brand, text search, service select, start/end date pickers, hotkeys.
-- `frontend/src/components/Corrie.tsx` — time-series correlation visualization.
+- `frontend/src/store/toasts.ts` — global toast slice (`pushToast`, `dismissToast`).
+- `frontend/src/components/Header.tsx` — top bar: brand, search, date pickers, hotkeys, page nav (Config / Rules / Graph), user menu (Phase A4+ added Config/Rules buttons).
+- `frontend/src/components/FlowList.tsx` — sidebar virtualized flow list, filter panel (services multi-select + tag intersection chips), keyboard nav.
+- `frontend/src/components/Corrie.tsx` — time-series correlation viz (ApexCharts).
+- `frontend/src/components/ExploitModal.tsx` — Test-Exploit modal (replays a flow against configured teams, downloads farm script).
+- `frontend/src/components/Toasts.tsx` — bottom-right toast container subscribed to `store.toasts`.
+- `frontend/src/components/FlagLeakWatcher.tsx` — polls `tags_include=['flag-out']` every 15s; new ones dispatch danger toasts. Mounted in Layout.
+- `frontend/src/components/NotesPanel.tsx` — per-flow notes UI (rendered below Meta in FlowView).
 - `frontend/src/pages/Home.tsx` — welcome screen + shortcut reference.
-- `frontend/src/pages/FlowView.tsx` — flow detail view with hex/text representations, download buttons, pwntools/python export.
+- `frontend/src/pages/Login.tsx` — auth gate; rendered when RequireAuth sees 401.
+- `frontend/src/pages/Config.tsx` — /config route, three tabs: Game / Services / Teams.
+- `frontend/src/pages/Rules.tsx` — /rules route, Suricata rules CRUD + templates.
+- `frontend/src/pages/FlowView.tsx` — flow detail view; toolbar includes Diff / pwntools / requests / Test Exploit; src_ip has a Block button.
 - `frontend/index.html` — entry HTML; favicon and title live here.
 - `frontend/public/logo.png` — brand asset, referenced by index.html / Header / Home.
 
@@ -131,8 +140,55 @@ Re-run `add_user.py <same-username>` — it overwrites the hash for that user. T
 
 Change `W4RYA_SECRET_KEY` in `.env` and `docker compose restart api`. All existing sessions are invalidated (clients get 401 → redirected to login).
 
+## Runtime-editable config (`/config` tab)
+
+DB table `app_config (key text pk, value jsonb, updated_at)` — module `services/api/app_config.py`. Set from UI, read by routes via `app_config.get(key)` with a 5s cache; writes invalidate the cache for that key.
+
+Stored keys: `services` (list of {name, ip, port, notes}), `teams` (list of {name, ip, notes}), `flag_regex`, `tick_length`, `start_date`, `flag_lifetime`, `vm_ip`, `team_id`, `visualizer_url`, `bpf`.
+
+Endpoints: `GET/PUT /config`, `GET/PUT /config/services`, `GET/PUT /config/teams`. `GET /services` and `GET /flag_regex` still work (read from the same DB row).
+
+⚠ `flag_regex` and `bpf` are also read by the Go assembler at boot from env. Changing them via UI takes effect for the api immediately but the assembler keeps the old value until restart. The Config UI flags this.
+
+## Exploit testing (`/attack/...`)
+
+Module `services/api/attack.py`. Reads the captured flow, concatenates every `c`-direction `raw` item, replays the bytes against each target's `(ip, flow.port_dst)` via plain TCP socket (ThreadPoolExecutor, hard caps: 64 targets, 15s timeout, 256KB recv). Flag regex from `app_config` is run against each response.
+
+Endpoints:
+- `GET  /attack/preview/<flow_id>` — port, payload size, item counts (cheap precheck for the modal).
+- `POST /attack/replay { flow_id, targets:[{name,ip}], timeout? }` — fires the replay, returns per-target {ok, latency_ms, response_size, response_excerpt, flag_count, flags?, error?}.
+- `GET  /attack/exploit-script/<flow_id>?timeout=N` — text/x-python download (Content-Disposition: attachment). Standalone replayer with payload as hex, teams baked in, ready for the external farm.
+
+UI: `ExploitModal` opens from a "Test exploit" button in FlowView's secondary toolbar.
+
+## Suricata rules (`/rules` tab + quick-block)
+
+Module `services/api/rules.py`. Stores rules as native Suricata text in `/app/suricata-rules/suricata.rules` (host: `./suricata-rules/`, mounted rw). 'Disabled' is the standard `# ` line prefix. Auto-assigned sids start at 1,000,000.
+
+Endpoints: `GET /rules` (list + templates), `POST /rules` (add), `PUT /rules/<sid>` (raw/enabled), `DELETE /rules/<sid>`, `POST /rules/block-ip { ip }` (quick-block writes a `drop ip <ip> any -> any any` rule).
+
+Reload is **manual** for now — `docker compose -f docker-compose-suricata.yml restart suricata` (the UI shows the command in a banner). Auto-reload (SIGUSR2 via docker.sock or a control FIFO) is a future sprint.
+
+When running the suricata variant, the same `./suricata-rules/` dir is what api edits, but the suricata container expects rules under `${SURICATA_DIR_HOST}/lib/rules/`. Either align via a symlink or remount; this is left to the team's deploy.
+
+## Notes per flow (`/flow/<id>/notes`)
+
+Module `services/api/notes.py`. Table `flow_notes (id uuid pk, flow_id uuid, author text, body text, created_at)`. Author is the session user; only the author can delete their own note. Notes panel rendered below the Meta block in FlowView.
+
+## Flag-leak alarm + toasts
+
+Client-only. `FlagLeakWatcher` polls `/query` with `tags_include=['flag-out']` every 15s, primes a seen-set on first load (no toasts for historical leaks), and dispatches a danger toast on every new id. Toasts render bottom-right via `Toasts.tsx`, dispatched through `store/toasts.ts`. To trigger one manually (debugging): `dispatch(pushToast({ message: 'hi', severity: 'danger' }))`.
+
 ## Roadmap (planned, not yet implemented)
 
-- **Suricata rules CRUD from UI** — list/create/edit/delete rules in `${SURICATA_DIR_HOST}/lib/rules/suricata.rules`, with basic syntax validation and Suricata container reload.
+Phase A is done (Configs / Exploit testing / Multi-service filter / Suricata rules+block / Notes+alerts). Next ideas surface in the working brainstorm (this file's git log + the recent conversation):
 
-When implementing, do read-only analysis first (the user will ask) before touching code.
+- **Auto-reload Suricata** when rules are saved (decide: SIGUSR2 via docker.sock vs control FIFO vs suricatasc).
+- **Per-service stats** badges on chip (`flows/tick`, attacks last 5 ticks, flags lost) — extends the multi-select.
+- **Attack timeline** — chronological Suricata alerts grouped by service+attacker.
+- **Loss attribution** — link a "lost flag at tick N" event from the scoreboard scraper to the flow that caused it.
+- **Roles + audit log** layered on the existing auth.
+- **Webhook to Discord/Slack** for critical toasts (server-side delivery instead of client).
+- **War-room mode** — fullscreen auto-rotating service-grid for a TV.
+
+When implementing, do read-only analysis first (the user usually asks) before touching code.
