@@ -263,7 +263,10 @@ export function Header() {
   return (
     <>
       <Link to={`/?${searchParams}`}>
-        <div className="header-icon font-bold text-lg">w4rya</div>
+        <div className="header-icon flex items-center gap-2">
+          <img src="/logo.png" alt="w4rya" className="h-8 w-8" />
+          <span className="font-bold text-lg">w4rya</span>
+        </div>
       </Link>
       <div>
         <TextSearch></TextSearch>

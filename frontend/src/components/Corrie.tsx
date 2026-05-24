@@ -538,7 +538,7 @@ function UnderAttackGraph(graphProps: GraphProps) {
     }
   };
 
-  // TODO: service names between visualizer and tulip don't necessarily match, how should we consider filters?
+  // TODO: service names between visualizer and w4rya don't necessarily match, how should we consider filters?
   const ranges: Record<string, { from_tick: number, to_tick: number }[]> = {};
   const lastSeen: Record<string, number | undefined> = {};
   for (const tick in underAttackData) {

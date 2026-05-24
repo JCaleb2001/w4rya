@@ -56,6 +56,7 @@ const generateShortcutTable = (data: { key: string; action: string; }[][]) => {
 export function Home() {
   return (
     <div className="p-4 flex flex-col gap-4 justify-center items-center h-full opacity-40">
+      <img src="/logo.png" alt="w4rya" className="h-40 w-40" />
       <h1 className="text-7xl text-gray-600 font-bold">w4rya</h1>
       <h2 className="text-3xl text-gray-500">flow analyzer</h2>
       <h1 className="text-2xl text-gray-500">Shortcut reference:</h1>
