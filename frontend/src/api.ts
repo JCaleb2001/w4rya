@@ -320,8 +320,19 @@ export const w4ryaApi = createApi({
         return `/attacks${qs ? "?" + qs : ""}`;
       },
     }),
-    getAudit: builder.query<AuditPayload, number | void>({
-      query: (limit) => `/audit?limit=${limit ?? 200}`,
+    getAudit: builder.query<AuditPayload, AuditQuery | void>({
+      query: (q) => {
+        const sp = new URLSearchParams();
+        if (q?.limit !== undefined) sp.set("limit", String(q.limit));
+        if (q?.actor) sp.set("actor", q.actor);
+        if (q?.action) sp.set("action", q.action);
+        if (q?.from) sp.set("from", q.from);
+        const qs = sp.toString();
+        return `/audit${qs ? "?" + qs : ""}`;
+      },
+    }),
+    getAuditActors: builder.query<string[], void>({
+      query: () => "/audit/actors",
     }),
 
     // --- notes per flow ---
@@ -532,6 +543,13 @@ export interface AuditPayload {
   events: AuditEvent[];
 }
 
+export interface AuditQuery {
+  limit?: number;
+  actor?: string;
+  action?: string;  // prefix
+  from?: string;    // ISO timestamp
+}
+
 export const {
   useGetServicesQuery,
   useGetFlagRegexQuery,
@@ -566,6 +584,7 @@ export const {
   useGetServicesStatsQuery,
   useGetAttacksQuery,
   useGetAuditQuery,
+  useGetAuditActorsQuery,
   useGetNotesQuery,
   useAddNoteMutation,
   useDeleteNoteMutation,

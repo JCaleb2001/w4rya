@@ -71,15 +71,32 @@ def log(
         _log.warning("audit.log failed: %s", e)
 
 
-def recent(limit: int = 200, after_ts: Optional[datetime] = None) -> list[dict]:
+def recent(
+    limit: int = 200,
+    after_ts: Optional[datetime] = None,
+    actor: Optional[str] = None,
+    action_prefix: Optional[str] = None,
+) -> list[dict]:
     if _pool is None:
         return []
-    sql = "SELECT id, when_ts, actor, action, target, details FROM audit_log"
+    clauses = []
     params: list[Any] = []
     if after_ts is not None:
-        sql += " WHERE when_ts > %s"
+        clauses.append("when_ts > %s")
         params.append(after_ts)
-    sql += " ORDER BY when_ts DESC LIMIT %s"
+    if actor:
+        clauses.append("actor = %s")
+        params.append(actor)
+    if action_prefix:
+        clauses.append("action LIKE %s")
+        # Wildcard at end only — prefix match (e.g. 'rules.' → rules.add,
+        # rules.update, rules.delete). LIKE escapes left to defaults.
+        params.append(action_prefix.replace("%", "") + "%")
+    where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
+    sql = (
+        "SELECT id, when_ts, actor, action, target, details "
+        "FROM audit_log" + where + " ORDER BY when_ts DESC LIMIT %s"
+    )
     params.append(int(limit))
     out: list[dict] = []
     with _pool.connection() as conn:
@@ -94,3 +111,14 @@ def recent(limit: int = 200, after_ts: Optional[datetime] = None) -> list[dict]:
                 "details": row[5],
             })
     return out
+
+
+def distinct_actors(limit: int = 100) -> list[str]:
+    if _pool is None:
+        return []
+    with _pool.connection() as conn:
+        cur = conn.execute(
+            "SELECT DISTINCT actor FROM audit_log ORDER BY actor LIMIT %s",
+            (int(limit),),
+        )
+        return [r[0] for r in cur.fetchall()]
