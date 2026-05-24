@@ -27,46 +27,6 @@ import {
 } from "../api";
 import { getTickStuff } from "../tick";
 
-function ServiceSelection() {
-  const FILTER_KEY = SERVICE_FILTER_KEY;
-
-  // TODO add all, maybe user react-select
-
-  const { data: services } = useGetServicesQuery(undefined, {
-    pollingInterval: SERVICE_REFETCH_INTERVAL_MS,
-  });
-
-  const service_select = [
-    {
-      ip: "",
-      port: 0,
-      name: "all",
-    },
-    ...(services || []),
-  ];
-  let [searchParams, setSearchParams] = useSearchParams();
-  return (
-    <select
-      value={searchParams.get(FILTER_KEY) ?? ""}
-      onChange={(event) => {
-        let serviceFilter = event.target.value;
-        if (serviceFilter && serviceFilter != "all") {
-          searchParams.set(FILTER_KEY, serviceFilter);
-        } else {
-          searchParams.delete(FILTER_KEY);
-        }
-        setSearchParams(searchParams);
-      }}
-    >
-      {service_select.map((service) => (
-        <option key={service.name} value={service.name}>
-          {service.name}
-        </option>
-      ))}
-    </select>
-  );
-}
-
 function TextSearch() {
   const FILTER_KEY = TEXT_FILTER_KEY;
   let [searchParams, setSearchParams] = useSearchParams();
@@ -294,11 +254,6 @@ export function Header() {
       </Link>
       <div>
         <TextSearch></TextSearch>
-      </div>
-      <div>
-        <Suspense>
-          <ServiceSelection></ServiceSelection>
-        </Suspense>
       </div>
       <div>
         <StartDateSelection></StartDateSelection>

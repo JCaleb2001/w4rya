@@ -131,6 +131,30 @@ def getTickInfo():
 def query():
     query = request.get_json()
 
+    # Translate service_names -> list of (ip_network, port) pairs by looking
+    # them up in the runtime services config. Frontend sends names so it
+    # doesn't have to know the resolution rules.
+    service_pairs: list[tuple] = []
+    raw_names = query.get("service_names")
+    requested_names = isinstance(raw_names, list) and len(raw_names) > 0
+    if requested_names:
+        cfg_services = app_config.get("services") or []
+        by_name = {s["name"]: s for s in cfg_services if isinstance(s, dict)}
+        for name in raw_names:
+            svc = by_name.get(name)
+            if not svc:
+                continue
+            try:
+                service_pairs.append((ip_network(svc["ip"]), int(svc["port"])))
+            except (KeyError, ValueError, TypeError):
+                continue
+    # Names were requested but NONE resolved -> return empty. Without this
+    # we'd silently fall back to the unfiltered set, which is misleading
+    # (e.g. a stale URL bookmark referencing a renamed service should show
+    # nothing, not everything).
+    if requested_names and not service_pairs:
+        return return_json_response([])
+
     try:
         query = database.FlowQuery(
             regex_insensitive=(
@@ -142,6 +166,7 @@ def query():
             ip_dst=ip_network(query["ip_dst"]) if "ip_dst" in query else None,
             port_src=query.get("port_src"),
             port_dst=query.get("port_dst"),
+            services=service_pairs,
             time_from=(
                 dateutil.parser.parse(query["time_from"])
                 if "time_from" in query

@@ -10,6 +10,7 @@ import { FetchBaseQueryError } from '@reduxjs/toolkit/query'
 import { Flow } from "../types";
 import {
   SERVICE_FILTER_KEY,
+  SERVICES_FILTER_KEY,
   TEXT_FILTER_KEY,
   START_FILTER_KEY,
   END_FILTER_KEY,
@@ -36,7 +37,7 @@ import {
 } from "../api";
 
 export function FlowList() {
-  let [searchParams] = useSearchParams();
+  let [searchParams, setSearchParams] = useSearchParams();
   let params = useParams();
 
   // we add a local variable to prevent racing with the browser location API
@@ -59,8 +60,39 @@ export function FlowList() {
 
   const virtuoso = useRef<VirtuosoHandle>(null);
 
-  const service_name = searchParams.get(SERVICE_FILTER_KEY) ?? "";
-  const service = services?.find((s) => s.name == service_name);
+  // Multi-select services. Read from ?services=a,b,c with legacy fallback to
+  // ?service=a (the old single-select dropdown that used to live in Header).
+  const services_param = searchParams.get(SERVICES_FILTER_KEY);
+  const legacy_service = searchParams.get(SERVICE_FILTER_KEY);
+  const selected_service_names =
+    services_param
+      ? services_param.split(",").map((s) => s.trim()).filter(Boolean)
+      : (legacy_service ? [legacy_service] : []);
+
+  function toggleService(name: string) {
+    const sp = new URLSearchParams(searchParams);
+    sp.delete(SERVICE_FILTER_KEY); // drop legacy
+    const cur = new Set(selected_service_names);
+    if (cur.has(name)) cur.delete(name);
+    else cur.add(name);
+    if (cur.size === 0) sp.delete(SERVICES_FILTER_KEY);
+    else sp.set(SERVICES_FILTER_KEY, [...cur].join(","));
+    setSearchParams(sp);
+  }
+
+  function selectAllServices() {
+    if (!services) return;
+    const sp = new URLSearchParams(searchParams);
+    sp.delete(SERVICE_FILTER_KEY);
+    sp.set(SERVICES_FILTER_KEY, services.map((s) => s.name).join(","));
+    setSearchParams(sp);
+  }
+  function clearServices() {
+    const sp = new URLSearchParams(searchParams);
+    sp.delete(SERVICE_FILTER_KEY);
+    sp.delete(SERVICES_FILTER_KEY);
+    setSearchParams(sp);
+  }
 
   const text_filter = searchParams.get(TEXT_FILTER_KEY) ?? undefined;
   const from_filter = searchParams.get(START_FILTER_KEY) ?? undefined;
@@ -75,8 +107,7 @@ export function FlowList() {
   } = useGetFlowsQuery(
     {
       regex_insensitive: debounced_text_filter,
-      ip_dst: service?.ip,
-      port_dst: service?.port,
+      service_names: selected_service_names.length > 0 ? selected_service_names : undefined,
       time_from: from_filter ? new Date(parseInt(from_filter)).toISOString() : undefined,
       time_to: to_filter ? new Date(parseInt(to_filter)).toISOString() : undefined,
       tags_include: includeTags,
@@ -232,28 +263,92 @@ export function FlowList() {
           )}
         </div>
         {showFilters && (
-          <div className="border-t border-hax-border p-2 bg-hax-bg/60">
-            <div className="flex items-center mb-2">
-              <p className="text-[10px] uppercase tracking-[0.2em] font-bold text-hax-muted">
-                ▎intersection filter
-              </p>
-              <button
-                className="ml-auto hax-btn text-[10px]"
-                onClick={() => dispatch(toggleTagIntersectMode())}
-              >
-                mode:&nbsp;<span className="text-hax-accent-bright">{tagIntersectionMode}</span>
-              </button>
+          <div className="border-t border-hax-border p-2 bg-hax-bg/60 flex flex-col gap-3">
+            {/* services multi-select */}
+            <div>
+              <div className="flex items-center mb-1.5">
+                <p className="text-[10px] uppercase tracking-[0.2em] font-bold text-hax-muted">
+                  ▎services
+                </p>
+                <span className="ml-2 text-[10px] text-hax-dim normal-case">
+                  {selected_service_names.length === 0
+                    ? "(all)"
+                    : `(${selected_service_names.length} selected)`}
+                </span>
+                <button
+                  onClick={selectAllServices}
+                  className="ml-auto hax-btn text-[10px]"
+                >
+                  all
+                </button>
+                <button onClick={clearServices} className="ml-1 hax-btn text-[10px]">
+                  none
+                </button>
+              </div>
+              {(!services || services.length === 0) ? (
+                <div className="text-[10px] text-hax-dim">
+                  no services configured — add in{" "}
+                  <Link to="/config" className="underline text-hax-accent-bright">
+                    /config → services
+                  </Link>
+                </div>
+              ) : (
+                <div className="flex gap-1.5 flex-wrap">
+                  {services.map((s) => {
+                    const active = selected_service_names.includes(s.name);
+                    const count =
+                      flowData?.reduce(
+                        (n, f) =>
+                          f.dst_ip === s.ip && f.dst_port === s.port ? n + 1 : n,
+                        0
+                      ) ?? 0;
+                    return (
+                      <button
+                        key={s.name + ":" + s.port}
+                        onClick={() => toggleService(s.name)}
+                        className={`px-2 py-0.5 rounded-sm text-[10px] font-mono uppercase tracking-wider border transition-all ${
+                          active
+                            ? "bg-hax-accent-deep/30 border-hax-accent text-hax-accent-bright shadow-[0_0_8px_-3px_rgba(168,85,247,0.6)]"
+                            : "bg-hax-elev border-hax-border text-hax-muted hover:border-hax-accent-deep hover:text-hax-text"
+                        }`}
+                        title={`${s.ip}:${s.port}`}
+                      >
+                        {s.name}
+                        <span className="ml-1 text-hax-dim">:{s.port}</span>
+                        {count > 0 && (
+                          <span className="ml-1.5 text-hax-accent-bright">{count}</span>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
             </div>
-            <div className="flex gap-1.5 flex-wrap">
-              {(availableTags ?? []).map((tag) => (
-                <Tag
-                  key={tag}
-                  tag={tag}
-                  disabled={!includeTags.includes(tag)}
-                  excluded={excludeTags.includes(tag)}
-                  onClick={() => dispatch(toggleFilterTag(tag))}
-                ></Tag>
-              ))}
+
+            {/* tags intersection */}
+            <div>
+              <div className="flex items-center mb-1.5">
+                <p className="text-[10px] uppercase tracking-[0.2em] font-bold text-hax-muted">
+                  ▎tag intersection
+                </p>
+                <button
+                  className="ml-auto hax-btn text-[10px]"
+                  onClick={() => dispatch(toggleTagIntersectMode())}
+                >
+                  mode:&nbsp;<span className="text-hax-accent-bright">{tagIntersectionMode}</span>
+                </button>
+              </div>
+              <div className="flex gap-1.5 flex-wrap">
+                {(availableTags ?? []).map((tag) => (
+                  <Tag
+                    key={tag}
+                    tag={tag}
+                    disabled={!includeTags.includes(tag)}
+                    excluded={excludeTags.includes(tag)}
+                    onClick={() => dispatch(toggleFilterTag(tag))}
+                  ></Tag>
+                ))}
+              </div>
             </div>
           </div>
         )}

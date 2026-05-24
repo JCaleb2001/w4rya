@@ -1,7 +1,8 @@
 export const API_BASE_PATH = `${window.location.origin}/api`;
 
 export const TEXT_FILTER_KEY = "text";
-export const SERVICE_FILTER_KEY = "service";
+export const SERVICE_FILTER_KEY = "service"; // legacy single-select (Corrie still uses)
+export const SERVICES_FILTER_KEY = "services"; // multi-select, comma-separated names
 export const START_FILTER_KEY = "start";
 export const END_FILTER_KEY = "end";
 export const FIRST_DIFF_KEY = "first";

@@ -29,6 +29,9 @@ class FlowQuery:
     ip_dst: IPv4Network | IPv6Network | None = None
     port_src: int | None = None
     port_dst: int | None = None
+    # Multi-service filter: list of (ip, port) pairs OR-ed together. Lets the
+    # UI multi-select chips translate to a single SQL query.
+    services: list[tuple[IPv4Network | IPv6Network, int]] = field(default_factory=list)
     time_from: datetime | None = None
     time_to: datetime | None = None
     tags_include: list[str] = field(default_factory=list)
@@ -155,6 +158,20 @@ class Connection(psycopg.Connection):
         if query.port_dst:
             parameters["port_dst"] = query.port_dst
             conditions.append(sql.SQL("f.port_dst = %(port_dst)s"))
+
+        if query.services:
+            pair_sqls = []
+            for i, (svc_ip, svc_port) in enumerate(query.services):
+                ip_key = f"svc_ip_{i}"
+                port_key = f"svc_port_{i}"
+                parameters[ip_key] = svc_ip
+                parameters[port_key] = svc_port
+                pair_sqls.append(
+                    sql.SQL("(f.ip_dst <<= %({ip})s AND f.port_dst = %({port})s)").format(
+                        ip=sql.SQL(ip_key), port=sql.SQL(port_key)
+                    )
+                )
+            conditions.append(sql.SQL("(") + sql.SQL(" OR ").join(pair_sqls) + sql.SQL(")"))
 
         if query.time_from:
             parameters["time_from"] = query.time_from
