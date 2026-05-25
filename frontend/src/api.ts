@@ -320,8 +320,19 @@ export const w4ryaApi = createApi({
         return `/attacks${qs ? "?" + qs : ""}`;
       },
     }),
-    getAudit: builder.query<AuditPayload, number | void>({
-      query: (limit) => `/audit?limit=${limit ?? 200}`,
+    getAudit: builder.query<AuditPayload, AuditQuery | void>({
+      query: (q) => {
+        const sp = new URLSearchParams();
+        if (q?.limit !== undefined) sp.set("limit", String(q.limit));
+        if (q?.actor) sp.set("actor", q.actor);
+        if (q?.action) sp.set("action", q.action);
+        if (q?.from) sp.set("from", q.from);
+        const qs = sp.toString();
+        return `/audit${qs ? "?" + qs : ""}`;
+      },
+    }),
+    getAuditActors: builder.query<string[], void>({
+      query: () => "/audit/actors",
     }),
 
     // --- notes per flow ---
@@ -502,6 +513,22 @@ export function hasRole(actual: Role | undefined, min: Role): boolean {
   return ROLE_RANK[actual] >= ROLE_RANK[min];
 }
 
+/**
+ * Hook: returns true if the current session user has at least the given role.
+ * Use this to gate UI affordances (disable / hide buttons) so users don't
+ * click into a 403. The backend is still the enforcement boundary.
+ */
+export function useCanRole(min: Role): boolean {
+  const { data } = useGetMeQuery();
+  return hasRole(data?.role, min);
+}
+
+/** Hook: just returns the current role string (or undefined while loading). */
+export function useMyRole(): Role | undefined {
+  const { data } = useGetMeQuery();
+  return data?.role;
+}
+
 export interface AuditEvent {
   id: string;
   when: string;
@@ -514,6 +541,13 @@ export interface AuditEvent {
 export interface AuditPayload {
   count: number;
   events: AuditEvent[];
+}
+
+export interface AuditQuery {
+  limit?: number;
+  actor?: string;
+  action?: string;  // prefix
+  from?: string;    // ISO timestamp
 }
 
 export const {
@@ -550,6 +584,7 @@ export const {
   useGetServicesStatsQuery,
   useGetAttacksQuery,
   useGetAuditQuery,
+  useGetAuditActorsQuery,
   useGetNotesQuery,
   useAddNoteMutation,
   useDeleteNoteMutation,

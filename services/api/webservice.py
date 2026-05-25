@@ -22,7 +22,10 @@
 # You should have received a copy of the GNU General Public License
 # along with Flower.  If not, see <https://www.gnu.org/licenses/>.
 
+import csv
 import dataclasses
+import io
+import json
 import os
 import re
 import traceback
@@ -492,16 +495,69 @@ def attack_replay():
 
 # --- /audit (admin-only log) -----------------------------------------------
 
-@application.route("/audit")
-@auth.requires_role("admin")
-def audit_recent():
+def _audit_query_args():
+    """Parse common audit filter args. Used by both JSON + CSV endpoints."""
     try:
         limit = int(request.args.get("limit", 200))
     except ValueError:
         limit = 200
-    limit = max(10, min(1000, limit))
-    rows = audit.recent(limit=limit)
+    actor = (request.args.get("actor") or "").strip() or None
+    action_prefix = (request.args.get("action") or "").strip() or None
+    after_raw = (request.args.get("from") or "").strip()
+    after_ts = None
+    if after_raw:
+        try:
+            after_ts = dateutil.parser.parse(after_raw)
+            if after_ts.tzinfo is None:
+                after_ts = after_ts.replace(tzinfo=timezone.utc)
+        except (TypeError, ValueError):
+            after_ts = None
+    return {
+        "limit": max(10, min(10_000, limit)),
+        "actor": actor,
+        "action_prefix": action_prefix,
+        "after_ts": after_ts,
+    }
+
+
+@application.route("/audit")
+@auth.requires_role("admin")
+def audit_recent():
+    args = _audit_query_args()
+    rows = audit.recent(**args)
     return return_json_response({"count": len(rows), "events": rows})
+
+
+@application.route("/audit/actors")
+@auth.requires_role("admin")
+def audit_distinct_actors():
+    return return_json_response(audit.distinct_actors())
+
+
+@application.route("/audit/export.csv")
+@auth.requires_role("admin")
+def audit_export_csv():
+    args = _audit_query_args()
+    # Bigger cap for exports
+    args["limit"] = min(50_000, max(args["limit"], 1000))
+    rows = audit.recent(**args)
+    buf = io.StringIO()
+    w = csv.writer(buf)
+    w.writerow(["when", "actor", "action", "target", "details"])
+    for r in rows:
+        w.writerow([
+            r["when"],
+            r["actor"],
+            r["action"],
+            r["target"] or "",
+            json.dumps(r["details"], default=str) if r["details"] else "",
+        ])
+    fname = "w4rya_audit_" + datetime.now(tz=timezone.utc).strftime("%Y%m%dT%H%M%SZ") + ".csv"
+    return Response(
+        buf.getvalue(),
+        mimetype="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
 
 
 # --- /flow/<id>/notes ------------------------------------------------------

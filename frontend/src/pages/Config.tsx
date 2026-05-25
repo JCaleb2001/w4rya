@@ -6,6 +6,8 @@ import {
   useUpdateConfigServicesMutation,
   useGetConfigTeamsQuery,
   useUpdateConfigTeamsMutation,
+  useCanRole,
+  useMyRole,
   GameConfig,
   Team,
 } from "../api";
@@ -16,6 +18,8 @@ type Tab = (typeof TABS)[number];
 
 export function Config() {
   const [tab, setTab] = useState<Tab>("game");
+  const canEdit = useCanRole("admin");
+  const role = useMyRole();
   return (
     <div className="p-6 bg-hax-bg text-hax-text font-mono min-h-full">
       <div className="flex items-center gap-4 mb-6">
@@ -34,14 +38,21 @@ export function Config() {
           ))}
         </div>
       </div>
-      {tab === "game" && <GameForm />}
-      {tab === "services" && <ServicesEditor />}
-      {tab === "teams" && <TeamsEditor />}
+      {!canEdit && (
+        <div className="mb-4 max-w-3xl text-[10px] uppercase tracking-wider text-hax-warning border border-hax-warning/40 bg-hax-warning/5 px-3 py-2 rounded-sm normal-case">
+          ⚠ read-only — your role is{" "}
+          <span className="font-bold">{role ?? "?"}</span>; saving requires{" "}
+          <span className="font-bold">admin</span>.
+        </div>
+      )}
+      {tab === "game" && <GameForm canEdit={canEdit} />}
+      {tab === "services" && <ServicesEditor canEdit={canEdit} />}
+      {tab === "teams" && <TeamsEditor canEdit={canEdit} />}
     </div>
   );
 }
 
-function GameForm() {
+function GameForm({ canEdit }: { canEdit: boolean }) {
   const { data, isLoading } = useGetConfigQuery();
   const [update, { isLoading: saving, error, isSuccess }] = useUpdateConfigMutation();
   const [form, setForm] = useState<Partial<GameConfig>>({});
@@ -113,6 +124,7 @@ function GameForm() {
               }}
               className="text-sm"
               spellCheck={false}
+              readOnly={!canEdit}
             />
           </label>
         );
@@ -122,8 +134,9 @@ function GameForm() {
 
       <button
         onClick={save}
-        disabled={saving}
-        className="hax-btn hax-btn-primary self-start mt-2 disabled:opacity-50"
+        disabled={saving || !canEdit}
+        title={!canEdit ? "requires admin role" : undefined}
+        className="hax-btn hax-btn-primary self-start mt-2 disabled:opacity-40 disabled:cursor-not-allowed"
       >
         {saving ? "saving…" : "save →"}
       </button>
@@ -131,7 +144,7 @@ function GameForm() {
   );
 }
 
-function ServicesEditor() {
+function ServicesEditor({ canEdit }: { canEdit: boolean }) {
   const { data, isLoading } = useGetConfigServicesQuery();
   const [update, { isLoading: saving, error, isSuccess }] = useUpdateConfigServicesMutation();
   const [rows, setRows] = useState<Service[]>([]);
@@ -166,9 +179,11 @@ function ServicesEditor() {
         <span className="text-[10px] text-hax-dim ml-3 normal-case">
           map (ip, port) → name. used everywhere a flow is tagged with its service.
         </span>
-        <button onClick={add} className="hax-btn ml-auto">
-          + add
-        </button>
+        {canEdit && (
+          <button onClick={add} className="hax-btn ml-auto">
+            + add
+          </button>
+        )}
       </div>
       <table className="w-full text-xs">
         <thead>
@@ -184,7 +199,7 @@ function ServicesEditor() {
           {rows.length === 0 && (
             <tr>
               <td colSpan={5} className="py-3 text-hax-dim text-center">
-                no services yet — click "+ add"
+                no services yet{canEdit ? ' — click "+ add"' : ""}
               </td>
             </tr>
           )}
@@ -195,6 +210,7 @@ function ServicesEditor() {
                   value={r.name}
                   onChange={(e) => patch(i, { name: e.target.value })}
                   className="text-xs w-full"
+                  readOnly={!canEdit}
                 />
               </td>
               <td className="py-1 pr-2">
@@ -203,6 +219,7 @@ function ServicesEditor() {
                   onChange={(e) => patch(i, { ip: e.target.value })}
                   className="text-xs w-full"
                   spellCheck={false}
+                  readOnly={!canEdit}
                 />
               </td>
               <td className="py-1 pr-2">
@@ -211,6 +228,7 @@ function ServicesEditor() {
                   value={r.port}
                   onChange={(e) => patch(i, { port: Number(e.target.value) })}
                   className="text-xs w-20"
+                  readOnly={!canEdit}
                 />
               </td>
               <td className="py-1 pr-2">
@@ -220,15 +238,18 @@ function ServicesEditor() {
                     patch(i, { notes: e.target.value } as any)
                   }
                   className="text-xs w-full"
+                  readOnly={!canEdit}
                 />
               </td>
               <td className="py-1">
-                <button
-                  onClick={() => remove(i)}
-                  className="text-hax-danger text-[10px] uppercase tracking-wider hover:hax-glow"
-                >
-                  remove
-                </button>
+                {canEdit && (
+                  <button
+                    onClick={() => remove(i)}
+                    className="text-hax-danger text-[10px] uppercase tracking-wider hover:hax-glow"
+                  >
+                    remove
+                  </button>
+                )}
               </td>
             </tr>
           ))}
@@ -237,8 +258,9 @@ function ServicesEditor() {
       <ErrorOrSuccess error={error} ok={isSuccess && !saving} />
       <button
         onClick={save}
-        disabled={saving}
-        className="hax-btn hax-btn-primary self-start disabled:opacity-50"
+        disabled={saving || !canEdit}
+        title={!canEdit ? "requires admin role" : undefined}
+        className="hax-btn hax-btn-primary self-start disabled:opacity-40 disabled:cursor-not-allowed"
       >
         {saving ? "saving…" : "save →"}
       </button>
@@ -246,7 +268,7 @@ function ServicesEditor() {
   );
 }
 
-function TeamsEditor() {
+function TeamsEditor({ canEdit }: { canEdit: boolean }) {
   const { data, isLoading } = useGetConfigTeamsQuery();
   const [update, { isLoading: saving, error, isSuccess }] = useUpdateConfigTeamsMutation();
   const [rows, setRows] = useState<Team[]>([]);
@@ -281,9 +303,11 @@ function TeamsEditor() {
         <span className="text-[10px] text-hax-dim ml-3 normal-case">
           enemy teams. used by the exploit-replay feature (test a flow against everyone).
         </span>
-        <button onClick={add} className="hax-btn ml-auto">
-          + add
-        </button>
+        {canEdit && (
+          <button onClick={add} className="hax-btn ml-auto">
+            + add
+          </button>
+        )}
       </div>
       <table className="w-full text-xs">
         <thead>
@@ -298,7 +322,7 @@ function TeamsEditor() {
           {rows.length === 0 && (
             <tr>
               <td colSpan={4} className="py-3 text-hax-dim text-center">
-                no teams yet — click "+ add"
+                no teams yet{canEdit ? ' — click "+ add"' : ""}
               </td>
             </tr>
           )}
@@ -309,6 +333,7 @@ function TeamsEditor() {
                   value={r.name}
                   onChange={(e) => patch(i, { name: e.target.value })}
                   className="text-xs w-full"
+                  readOnly={!canEdit}
                 />
               </td>
               <td className="py-1 pr-2">
@@ -317,6 +342,7 @@ function TeamsEditor() {
                   onChange={(e) => patch(i, { ip: e.target.value })}
                   className="text-xs w-full"
                   spellCheck={false}
+                  readOnly={!canEdit}
                 />
               </td>
               <td className="py-1 pr-2">
@@ -324,15 +350,18 @@ function TeamsEditor() {
                   value={r.notes ?? ""}
                   onChange={(e) => patch(i, { notes: e.target.value })}
                   className="text-xs w-full"
+                  readOnly={!canEdit}
                 />
               </td>
               <td className="py-1">
-                <button
-                  onClick={() => remove(i)}
-                  className="text-hax-danger text-[10px] uppercase tracking-wider hover:hax-glow"
-                >
-                  remove
-                </button>
+                {canEdit && (
+                  <button
+                    onClick={() => remove(i)}
+                    className="text-hax-danger text-[10px] uppercase tracking-wider hover:hax-glow"
+                  >
+                    remove
+                  </button>
+                )}
               </td>
             </tr>
           ))}
@@ -341,8 +370,9 @@ function TeamsEditor() {
       <ErrorOrSuccess error={error} ok={isSuccess && !saving} />
       <button
         onClick={save}
-        disabled={saving}
-        className="hax-btn hax-btn-primary self-start disabled:opacity-50"
+        disabled={saving || !canEdit}
+        title={!canEdit ? "requires admin role" : undefined}
+        className="hax-btn hax-btn-primary self-start disabled:opacity-40 disabled:cursor-not-allowed"
       >
         {saving ? "saving…" : "save →"}
       </button>
