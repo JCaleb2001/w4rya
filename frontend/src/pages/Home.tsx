@@ -111,7 +111,7 @@ export function Home() {
       </div>
 
       <div className="text-[10px] uppercase tracking-[0.3em] text-hax-dim mt-auto pt-6">
-        v0.1.0 // hard fork of tulip · gpl-3.0
+        v0.3.0 // hard fork of tulip · gpl-3.0
       </div>
     </div>
   );

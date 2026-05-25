@@ -1,13 +1,23 @@
-# w4rya users — bcrypt password hashes
+# w4rya users — bcrypt password hashes + role
 #
 # This file is loaded by services/api/auth.py at request time (mtime-cached).
 # Real users go in `auth/users.yaml` — that file is gitignored, do NOT commit it.
 #
 # Add a user (preferred — runs inside the api container so deps are already there):
-#   docker compose run --rm api python /app/auth/add_user.py <username>
+#   docker compose run --rm api python /app/auth/add_user.py <username> [--role admin|operator|viewer]
 #
 # Or, if you have bcrypt + PyYAML on the host:
-#   python3 auth/add_user.py <username>
+#   python3 auth/add_user.py <username> --role <role>
+#
+# Roles (rank in parentheses, higher = more permissions):
+#   viewer    (0)  — read-only: browse flows, view audit (no), can't write
+#   operator  (1)  — can edit Suricata rules, run exploit replay, block IPs,
+#                    star flows. CANNOT edit /config (services/teams/game vars).
+#   admin     (2)  — full access, including /config and /audit.
+#
+# Backward-compat note: entries without a `role` field default to `admin`
+# (so a bootstrap user keeps full access after upgrade). New users via
+# add_user.py default to viewer — the safer default.
 #
 # After editing users.yaml: restart the api container so the cache picks it up
 # (the mtime cache will also pick it up on next request, but a restart is safer):
@@ -16,3 +26,7 @@
 users:
   # caleb:
   #   password_hash: "$2b$12$replaceWithRealBcryptHash................................"
+  #   role: admin
+  # alice:
+  #   password_hash: "$2b$12$replaceWithRealBcryptHash................................"
+  #   role: operator
