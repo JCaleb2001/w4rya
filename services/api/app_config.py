@@ -216,6 +216,9 @@ SCALAR_KEYS = {
 BOOL_KEYS = {"rules_autoreload"}
 
 
+_REDOS_HINT = re.compile(r"\([^)]*[+*][^)]*\)[+*]")
+
+
 def coerce_scalar(key: str, raw: Any) -> Any:
     if key == "tick_length" or key == "flag_lifetime":
         return int(raw)
@@ -227,4 +230,22 @@ def coerce_scalar(key: str, raw: Any) -> Any:
         if isinstance(raw, str):
             return raw.strip().lower() in ("true", "1", "yes", "on")
         return False
+    if key == "flag_regex":
+        s = str(raw)
+        # D1: validate at write-time so a typo doesn't break /query for the
+        # whole team later.
+        try:
+            re.compile(s)
+        except re.error as e:
+            raise ValueError(f"invalid regex: {e}")
+        # Cheap ReDoS heuristic: nested unbounded quantifiers like
+        # (foo+)+ or (.*x.*)*. We reject these to keep the team safe from
+        # an accidental catastrophic-backtracking pattern that would freeze
+        # every /query request.
+        if _REDOS_HINT.search(s):
+            raise ValueError(
+                "regex has nested unbounded quantifiers (likely ReDoS-prone); "
+                "please simplify"
+            )
+        return s
     return str(raw)

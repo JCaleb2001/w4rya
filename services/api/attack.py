@@ -17,7 +17,7 @@ import re
 import socket
 import time
 import uuid
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, wait, ALL_COMPLETED
 from dataclasses import dataclass
 from typing import Optional
 
@@ -28,6 +28,9 @@ MAX_TIMEOUT = 15.0
 MAX_RECV_BYTES = 256 * 1024
 EXCERPT_BYTES = 1024
 MAX_TARGETS = 64
+# Hard ceiling for the whole replay call. Must stay well under gunicorn's -t
+# (currently 60s in Dockerfile-api) so worker doesn't get killed mid-replay.
+OVERALL_DEADLINE_SEC = 45.0
 
 
 @dataclass
@@ -145,27 +148,42 @@ def replay(flow, targets: list[dict], timeout: float = DEFAULT_TIMEOUT) -> dict:
         }
 
     workers = min(16, len(targets))
+    # D1: overall deadline so a few slow targets can't pin a gunicorn worker
+    # for longer than the worker timeout (-t in Dockerfile-api).
+    deadline = min(
+        OVERALL_DEADLINE_SEC,
+        max(timeout * 3, timeout + 5),
+    )
+    deadline_at = time.monotonic() + deadline
     with ThreadPoolExecutor(max_workers=workers) as ex:
-        futures = [
-            ex.submit(
-                _replay_one,
-                str(t.get("name") or t.get("ip")),
-                str(t.get("ip")),
-                port,
-                payload,
-                timeout,
-                flag_re,
-            )
-            for t in targets
-            if t.get("ip")
-        ]
-        results = [f.result() for f in futures]
+        fut_map: dict = {}
+        for t in targets:
+            if not t.get("ip"):
+                continue
+            name = str(t.get("name") or t["ip"])
+            ip = str(t["ip"])
+            f = ex.submit(_replay_one, name, ip, port, payload, timeout, flag_re)
+            fut_map[f] = (name, ip)
+
+        remaining = max(0.5, deadline_at - time.monotonic())
+        done, undone = wait(fut_map.keys(), timeout=remaining, return_when=ALL_COMPLETED)
+        results: list[ReplayResult] = [f.result() for f in done]
+        for f in undone:
+            f.cancel()
+            name, ip = fut_map[f]
+            results.append(ReplayResult(
+                team_name=name,
+                target_ip=ip,
+                ok=False,
+                error="deadline exceeded — overall replay budget hit",
+            ))
 
     return {
         "flow_id": str(flow.id),
         "port": port,
         "payload_size": len(payload),
         "timeout_s": timeout,
+        "overall_deadline_s": deadline,
         "results": [r.to_dict() for r in results],
     }
 

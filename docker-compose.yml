@@ -21,6 +21,12 @@ services:
     # This does not need to be adjusted, unless you actually want to limit it
     # Postgres uses shared memory for caching, and docker assigns just 64 MB by default
     shm_size: '128g'
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U w4rya -d w4rya || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
 
   frontend:
     build:
@@ -66,10 +72,18 @@ services:
       TIMESCALE: ${TIMESCALE}
       W4RYA_TRAFFIC_DIR: ${TRAFFIC_DIR_DOCKER}
       W4RYA_SECRET_KEY: ${W4RYA_SECRET_KEY}
+      W4RYA_COOKIE_SECURE: ${W4RYA_COOKIE_SECURE:-}
+      W4RYA_LOG_LEVEL: ${W4RYA_LOG_LEVEL:-INFO}
       FLAG_REGEX: ${FLAG_REGEX}
       TICK_START: ${TICK_START}
       TICK_LENGTH: ${TICK_LENGTH}
       VM_IP: ${VM_IP}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; urllib.request.urlopen('http://localhost:5000/healthz', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
 
   flagids:
     restart: unless-stopped

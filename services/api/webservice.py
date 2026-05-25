@@ -26,13 +26,15 @@ import csv
 import dataclasses
 import io
 import json
+import logging
 import os
 import re
 import traceback
 import uuid
 from datetime import datetime, timedelta, timezone
+from urllib.parse import urlparse
 from flask import Flask, Response, send_file, jsonify, session
-from requests import get
+import requests
 import dateutil.parser
 from ipaddress import ip_network
 
@@ -58,6 +60,7 @@ import app_config
 import attack
 import audit
 import notes
+import rate_limit
 import rules
 import suricata_ctl
 
@@ -69,11 +72,18 @@ if not _secret:
         "W4RYA_SECRET_KEY env var is required (generate with: openssl rand -hex 32)"
     )
 application.secret_key = _secret
+_cookie_secure = os.environ.get("W4RYA_COOKIE_SECURE", "").lower() in (
+    "1", "true", "yes", "on",
+)
 application.config.update(
     SESSION_COOKIE_NAME="w4rya_session",
     SESSION_COOKIE_HTTPONLY=True,
+    # Lax is OK for our usage (no cross-site flows). Bump to Strict if you
+    # never serve the UI from a different origin than the API.
     SESSION_COOKIE_SAMESITE="Lax",
-    SESSION_COOKIE_SECURE=False,  # set true when behind HTTPS
+    # MUST be True when running behind HTTPS — set W4RYA_COOKIE_SECURE=1 in
+    # .env once you have a TLS terminator in front of the api.
+    SESSION_COOKIE_SECURE=_cookie_secure,
     PERMANENT_SESSION_LIFETIME=60 * 60 * 24 * 7,  # 7 days
 )
 
@@ -99,6 +109,20 @@ def hello_world():
     return "Hello, World!"
 
 
+@application.route("/healthz")
+def healthz():
+    """Liveness + minimal DB connectivity check. No auth required (this is
+    what Docker/k8s healthchecks call). Returns 200 only when the api can
+    reach Timescale.
+    """
+    try:
+        with db.connection() as c:
+            c.execute("SELECT 1")
+        return jsonify({"ok": True, "db": "up"}), 200
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 503
+
+
 @application.route("/login", methods=["POST"])
 def login():
     data = request.get_json(silent=True) or {}
@@ -106,13 +130,31 @@ def login():
     password = data.get("password") or ""
     if not username or not password:
         return jsonify({"error": "username and password required"}), 400
+
+    # D1: brute-force protection. Per-worker in-memory bucket; with 3 gunicorn
+    # workers an attacker still only gets ~15 attempts in 5 min. Acceptable
+    # for team-internal threat model. (Public deployment should move this to
+    # a shared store.)
+    remote_ip = request.remote_addr or "?"
+    rl_key = f"{remote_ip}::{username}"
+    if rate_limit.is_blocked(rl_key):
+        retry = rate_limit.seconds_until_unblock(rl_key)
+        audit.log(username or "?", "auth.login_blocked", details={"ip": remote_ip})
+        return jsonify({
+            "error": "too many attempts; try again later",
+            "retry_after_sec": retry,
+        }), 429
+
     if not auth.verify_password(username, password):
-        audit.log(username or "?", "auth.login_fail")
+        count = rate_limit.record_failure(rl_key)
+        audit.log(username or "?", "auth.login_fail", details={"ip": remote_ip, "attempt": count})
         return jsonify({"error": "invalid credentials"}), 401
+
+    rate_limit.clear(rl_key)
     session.clear()
     session["user"] = username
     session.permanent = True
-    audit.log(username, "auth.login", details={"role": auth.current_role()})
+    audit.log(username, "auth.login", details={"role": auth.current_role(), "ip": remote_ip})
     return jsonify({"user": username, "role": auth.current_role()})
 
 
@@ -227,20 +269,35 @@ def getStats():
 
 @application.route("/under_attack")
 def getUnderAttack():
-    vu = app_config.get("visualizer_url") or ""
+    vu = (app_config.get("visualizer_url") or "").strip()
     if not vu:
         return return_json_response({})
-    res = get(
-        f"{vu}/api/under-attack",
-        params={
-            "from_tick": request.args.get("from_tick"),
-            "to_tick": request.args.get("to_tick"),
-        },
-    )
-    assert res.status_code == 200
-
-    tick_data = res.json()
-    return return_json_response(tick_data)
+    # D1: validate URL scheme to prevent SSRF via a typo'd config value
+    # (e.g. file:// or gopher://). HTTP/HTTPS only.
+    parsed = urlparse(vu)
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        return return_json_response({"error": "visualizer_url invalid"}), 400
+    try:
+        # D1: hard timeout so a wedged visualizer can't freeze a gunicorn
+        # worker. allow_redirects=False so a redirect can't bounce us to a
+        # different host quietly.
+        res = requests.get(
+            f"{vu}/api/under-attack",
+            params={
+                "from_tick": request.args.get("from_tick"),
+                "to_tick": request.args.get("to_tick"),
+            },
+            timeout=3,
+            allow_redirects=False,
+        )
+    except requests.exceptions.RequestException as e:
+        return return_json_response({"error": f"visualizer: {e}"}), 502
+    if res.status_code != 200:
+        return return_json_response({"error": f"visualizer http {res.status_code}"}), 502
+    try:
+        return return_json_response(res.json())
+    except ValueError:
+        return return_json_response({"error": "visualizer returned non-JSON"}), 502
 
 
 @application.route("/tags")
@@ -863,35 +920,48 @@ def confertToPwn(id):
 
 @application.route("/download/")
 def downloadFile():
-    filepath = request.args.get("file")
-    if filepath is None:
-        return return_text_response(
-            "There was an error while downloading the requested file:\n{}: {}".format(
-                "Invalid 'file'", "No 'file' given"
-            )
-        )
-    filepath = Path(filepath)
+    raw = request.args.get("file")
+    if raw is None:
+        return return_text_response("error: no 'file' given"), 400
 
-    # Check for path traversal by resolving the file first.
-    filepath = filepath.resolve()
-    if traffic_dir not in filepath.parents and dump_pcaps_dir not in filepath.parents:
-        return return_text_response(
-            "There was an error while downloading the requested file:\n{}: {}".format(
-                "Invalid 'file'",
-                "'file' was not in a subdirectory of traffic_dir or dump_pcaps_dir",
-            )
-        )
-
+    # D1: tightened path-traversal guard. We resolve BOTH sides (so a
+    # trailing slash or symlink in the env-derived allowlist doesn't widen
+    # the check), then use is_relative_to (Python 3.9+) so '..' in the
+    # user path can't escape. lexists+is_symlink rejects symlink trickery.
     try:
-        return send_file(filepath, as_attachment=True)
-    except FileNotFoundError:
-        return return_text_response(
-            "There was an error while downloading the requested file:\n{}: {}".format(
-                "Invalid 'file'", "'file' not found"
-            )
-        )
+        req = Path(raw)
+        if req.is_absolute():
+            target = req.resolve(strict=False)
+        else:
+            target = (traffic_dir / req).resolve(strict=False)
+    except (OSError, ValueError):
+        return return_text_response("error: invalid path"), 400
+
+    allow_roots = []
+    for root in (traffic_dir, dump_pcaps_dir):
+        try:
+            allow_roots.append(Path(root).resolve(strict=False))
+        except (OSError, ValueError):
+            continue
+    if not any(target == r or target.is_relative_to(r) for r in allow_roots):
+        return return_text_response("error: path outside allowed roots"), 403
+
+    if target.is_symlink():
+        return return_text_response("error: symlinks not allowed"), 403
+    if not target.exists():
+        return return_text_response("error: file not found"), 404
+
+    return send_file(str(target), as_attachment=True)
 
 def create_app():
+    # D1: surface module-level warnings/errors via gunicorn's stderr.
+    # Without this, audit.log _log.warning calls and other module loggers
+    # vanish silently (root logger defaults to WARNING but with no handler).
+    log_level_name = os.environ.get("W4RYA_LOG_LEVEL", "INFO").upper()
+    logging.basicConfig(
+        level=getattr(logging, log_level_name, logging.INFO),
+        format="[%(asctime)s] [%(name)s] %(levelname)s: %(message)s",
+    )
     db.open()
     app_config.set_pool(db)
     app_config.init_schema()
