@@ -6,3 +6,4 @@ python-dateutil
 psycopg[binary,pool]
 bcrypt
 PyYAML
+pytest
