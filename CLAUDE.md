@@ -234,9 +234,29 @@ Fullscreen route OUTSIDE the main Layout (no header/sidebar). 2×2 panels: servi
 
 Backend remains the security boundary (403 with `{required_role, your_role}`); the UI hints are purely UX so users don't click into errors.
 
+## Tests (D4)
+
+`services/api/tests/test_pure.py` — 29 unit tests covering the pure-function paths the v0.3.0 audit flagged as silent-failure risks (`rate_limit`, `app_config.coerce_scalar` regex validation, `rules.parse_one` + `_inject_sid`, `rules` round-trip on a tmp file, `attack` script gen / payload build). Skips DB and Flask startup — runs in ~0.3s.
+
+Run:
+
+```
+docker compose exec api python -m pytest /app/tests/ -v
+```
+
+The api Dockerfile installs `pytest` via `requirements.txt`. If you ever rebuild and hit `Temporary failure in name resolution` from pip, BuildKit's network is wedged on this host — workaround:
+
+```
+docker build --network=host -t w4rya-api:latest -f services/api/Dockerfile-api services/api/
+```
+
+## Backup (D2)
+
+`scripts/backup.sh` snapshots `auth/users.yaml` + `suricata-rules/*.rules` + `.env` + `pg_dump` of `app_config` / `flow_notes` / `audit_log` into a single `./backups/w4rya_<UTCISO>.tgz`. Cron it during a CTF. `/backups/` is gitignored (tarball contains secrets).
+
 ## Roadmap (next-up)
 
-Phase A (operational features), Phase B (auto-reload / per-service stats / attack timeline / roles+audit), and Phase C (UI role-gating polish / war-room mode / audit filter+export) are done. Open ideas — these all need info from the user before starting:
+Phase A (operational features), Phase B (auto-reload / per-service stats / attack timeline / roles+audit), Phase C (UI role-gating polish / war-room mode / audit filter+export), and Phase D (hardening + ops sanity + frontend polish + smoke tests) are done. Open ideas — these all need info from the user before starting:
 
 - **Loss attribution / scoreboard scraper** — link a "lost flag at tick N" scoreboard event to the flow that caused it. Needs the CTF platform format (Faust, EnoEngine, iCTF, custom?) and scoreboard URL/auth.
 - **Replay with tokenized flagids** — current exploit replay sends captured bytes as-is, which works for stateless exploits but not for ones where the flagid was per-team. Needs FLAGID_ENDPOINT plumbing extended to swap per-team flagid before each replay target.

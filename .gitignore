@@ -143,3 +143,6 @@ suricata
 # suricata runtime: command socket + pidfile, both runtime-only
 /suricata-run/*
 !/suricata-run/.gitkeep
+
+# scripts/backup.sh output — may contain users.yaml + .env contents
+/backups/

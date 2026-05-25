@@ -65,10 +65,18 @@ services:
       TIMESCALE: ${TIMESCALE}
       W4RYA_TRAFFIC_DIR: ${TRAFFIC_DIR_DOCKER}
       W4RYA_SECRET_KEY: ${W4RYA_SECRET_KEY}
+      W4RYA_COOKIE_SECURE: ${W4RYA_COOKIE_SECURE:-}
+      W4RYA_LOG_LEVEL: ${W4RYA_LOG_LEVEL:-INFO}
       FLAG_REGEX: ${FLAG_REGEX}
       TICK_START: ${TICK_START}
       TICK_LENGTH: ${TICK_LENGTH}
       VM_IP: ${VM_IP}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; urllib.request.urlopen('http://localhost:5000/healthz', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
 
   flagids:
     restart: unless-stopped

@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import {
   createApi,
   fetchBaseQuery,
@@ -527,6 +528,24 @@ export function useCanRole(min: Role): boolean {
 export function useMyRole(): Role | undefined {
   const { data } = useGetMeQuery();
   return data?.role;
+}
+
+/**
+ * Returns 0 (which RTK Query treats as "no polling") when the document is
+ * hidden, else returns `whenVisibleMs`. Lets background tabs idle instead of
+ * hammering /attacks, /audit, etc when nobody is looking.
+ */
+export function useVisibilityAwarePolling(whenVisibleMs: number): number {
+  const [hidden, setHidden] = useState(
+    typeof document !== "undefined" && document.visibilityState === "hidden"
+  );
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const handler = () => setHidden(document.visibilityState === "hidden");
+    document.addEventListener("visibilitychange", handler);
+    return () => document.removeEventListener("visibilitychange", handler);
+  }, []);
+  return hidden ? 0 : whenVisibleMs;
 }
 
 export interface AuditEvent {

@@ -19,7 +19,7 @@ USERS_FILE = os.environ.get("W4RYA_USERS_FILE", "/app/auth/users.yaml")
 # Paths that bypass the auth guard. Everything else requires a session.
 # `/me` is intentionally NOT public — the frontend uses its 401 response as
 # the "not logged in" signal.
-PUBLIC_PATHS = {"/", "/login", "/logout"}
+PUBLIC_PATHS = {"/", "/healthz", "/login", "/logout"}
 
 # Role rank: higher number = more permissions. Decorator compares
 # ROLE_RANK[user_role] >= ROLE_RANK[required_role].

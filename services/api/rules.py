@@ -259,9 +259,18 @@ def _inject_sid(raw: str, sid: int) -> str:
 
     Only injects sid (and rev if missing) to avoid duplicating directives that
     were already present.
+
+    D1: refuse to inject when parens look unbalanced. We do a naive count of
+    raw `(` vs `)` which fails on edge cases (e.g. a literal `)` inside a
+    content:"...)..." string with balanced quoting), but the cost is having
+    the user paste a sid: themselves, not silently shifting rule semantics.
     """
     if _SID_RE.search(raw):
         return raw
+    if raw.count("(") != raw.count(")"):
+        raise ValueError(
+            "rule has unbalanced parens; please include 'sid:N;' explicitly"
+        )
     needs_rev = not _REV_RE.search(raw)
     extra = f" sid:{sid};" + (" rev:1;" if needs_rev else "")
     idx = raw.rfind(")")

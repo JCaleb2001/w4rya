@@ -7,6 +7,7 @@ import {
   useGetMeQuery,
   useGetServicesStatsQuery,
   useGetTickInfoQuery,
+  useVisibilityAwarePolling,
 } from "../api";
 
 const REFRESH_MS = 10_000;
@@ -18,12 +19,13 @@ const REFRESH_MS = 10_000;
  */
 export function Warroom() {
   const { data: me } = useGetMeQuery();
+  const pollMs = useVisibilityAwarePolling(REFRESH_MS);
   const { data: services } = useGetServicesStatsQuery(5, {
-    pollingInterval: REFRESH_MS,
+    pollingInterval: pollMs,
   });
   const { data: attacks } = useGetAttacksQuery(
     { limit: 50 },
-    { pollingInterval: REFRESH_MS }
+    { pollingInterval: pollMs }
   );
   const { data: tick } = useGetTickInfoQuery();
 
