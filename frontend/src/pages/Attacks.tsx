@@ -3,6 +3,7 @@ import {
   AttackEvent,
   useGetAttacksQuery,
   useGetServicesQuery,
+  useVisibilityAwarePolling,
 } from "../api";
 
 const POLL_MS = 20000;
@@ -18,9 +19,10 @@ export function Attacks() {
   const fromTick = fromTickParam ? Number(fromTickParam) : undefined;
   const toTick = toTickParam ? Number(toTickParam) : undefined;
 
+  const pollMs = useVisibilityAwarePolling(POLL_MS);
   const { data, isLoading, isFetching, refetch } = useGetAttacksQuery(
     { from_tick: fromTick, to_tick: toTick, service: service || undefined },
-    { pollingInterval: POLL_MS, refetchOnMountOrArgChange: true }
+    { pollingInterval: pollMs, refetchOnMountOrArgChange: true }
   );
 
   function setParam(k: string, v?: string | number | null) {

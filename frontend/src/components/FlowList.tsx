@@ -35,6 +35,7 @@ import {
   useGetServicesStatsQuery,
   useGetTagsQuery,
   useStarFlowMutation,
+  useVisibilityAwarePolling,
 } from "../api";
 
 export function FlowList() {
@@ -46,10 +47,11 @@ export function FlowList() {
 
   const { data: availableTags } = useGetTagsQuery();
   const { data: services } = useGetServicesQuery();
-  // Per-service stats over last 5 ticks. Polls every 15s; reused as a tag
-  // pressure indicator on each chip below.
+  // Per-service stats over last 5 ticks. Polls every 15s when visible; reused
+  // as a tag pressure indicator on each chip below.
+  const servicesPoll = useVisibilityAwarePolling(15000);
   const { data: serviceStats } = useGetServicesStatsQuery(5, {
-    pollingInterval: 15000,
+    pollingInterval: servicesPoll,
   });
 
   const filterFlags = useAppSelector((state) => state.filter.filterFlags);

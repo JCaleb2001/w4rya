@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { useGetFlowsQuery } from "../api";
+import { useGetFlowsQuery, useVisibilityAwarePolling } from "../api";
 import { useAppDispatch } from "../store";
 import { pushToast } from "../store/toasts";
 
@@ -16,9 +16,10 @@ export function FlagLeakWatcher() {
   const seenRef = useRef<Set<string>>(new Set());
   const bootedRef = useRef<boolean>(false);
 
+  const pollMs = useVisibilityAwarePolling(POLL_MS);
   const { data } = useGetFlowsQuery(
     { tags_include: [FLAG_OUT_TAG] },
-    { pollingInterval: POLL_MS, refetchOnMountOrArgChange: true }
+    { pollingInterval: pollMs, refetchOnMountOrArgChange: true }
   );
 
   useEffect(() => {

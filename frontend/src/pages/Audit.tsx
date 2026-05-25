@@ -6,6 +6,7 @@ import {
   useGetAuditActorsQuery,
   useGetAuditQuery,
   useGetMeQuery,
+  useVisibilityAwarePolling,
 } from "../api";
 import { API_BASE_PATH } from "../const";
 
@@ -46,9 +47,10 @@ export function Audit() {
     from: fromIso,
   };
 
+  const pollMs = useVisibilityAwarePolling(30000);
   const { data, isLoading } = useGetAuditQuery(query, {
     skip: !allowed,
-    pollingInterval: 30000,
+    pollingInterval: pollMs,
   });
   const { data: actors } = useGetAuditActorsQuery(undefined, { skip: !allowed });
 
