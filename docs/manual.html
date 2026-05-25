@@ -1,0 +1,930 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>w4rya — Manual de uso (v0.4.0)</title>
+<style>
+  @page {
+    size: A4;
+    margin: 2cm 1.8cm 2cm 1.8cm;
+    @bottom-right {
+      content: counter(page) " / " counter(pages);
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 8pt;
+      color: #888;
+    }
+    @bottom-left {
+      content: "w4rya v0.4.0 · manual de uso";
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 8pt;
+      color: #888;
+    }
+  }
+  @page :first {
+    margin: 0;
+    @bottom-right { content: none; }
+    @bottom-left  { content: none; }
+  }
+
+  :root {
+    --accent: #7e22ce;
+    --accent-bright: #a855f7;
+    --danger: #b91c1c;
+    --warning: #b45309;
+    --success: #15803d;
+    --ink: #1a1a22;
+    --muted: #5f5f72;
+    --dim: #8888a0;
+    --border: #d4d4dc;
+    --code-bg: #f4f3f7;
+    --code-border: #e0dde6;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    color: var(--ink);
+    font-family: -apple-system, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+    font-size: 10.5pt;
+    line-height: 1.45;
+  }
+
+  code, pre, kbd, .mono {
+    font-family: 'JetBrains Mono', 'Menlo', 'Consolas', monospace;
+    font-size: 9pt;
+  }
+
+  /* ---- COVER ---- */
+  .cover {
+    height: 100vh;
+    page-break-after: always;
+    background: linear-gradient(160deg, #1a0f2e 0%, #0a0a0f 60%, #1c1c28 100%);
+    color: #e4e4ed;
+    padding: 4cm 2.2cm;
+    position: relative;
+  }
+  .cover::after {
+    content: "";
+    position: absolute; inset: 0;
+    background: radial-gradient(circle at 80% 30%, rgba(168,85,247,0.25) 0%, transparent 50%);
+    pointer-events: none;
+  }
+  .cover h1 {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 64pt;
+    letter-spacing: 0.16em;
+    font-weight: 700;
+    margin: 0;
+    text-shadow: 0 0 20px rgba(168,85,247,0.7);
+    position: relative;
+  }
+  .cover .tag {
+    font-family: 'JetBrains Mono', monospace;
+    color: #c084fc;
+    text-transform: uppercase;
+    letter-spacing: 0.4em;
+    font-size: 9pt;
+    margin-top: 0.6cm;
+    position: relative;
+  }
+  .cover .subtitle {
+    margin-top: 3cm;
+    font-size: 22pt;
+    line-height: 1.3;
+    max-width: 14cm;
+    position: relative;
+  }
+  .cover .meta {
+    position: absolute;
+    bottom: 2.5cm; left: 2.2cm; right: 2.2cm;
+    display: flex; justify-content: space-between;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 9pt;
+    color: #8888a0;
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+  }
+  .cover .meta .right { color: #c084fc; }
+
+  /* ---- TOC ---- */
+  .toc {
+    page-break-after: always;
+    padding-top: 1cm;
+  }
+  .toc h2 {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 14pt;
+    text-transform: uppercase;
+    letter-spacing: 0.25em;
+    color: var(--accent);
+    border-bottom: 1px solid var(--accent);
+    padding-bottom: 0.3cm;
+    margin-bottom: 0.6cm;
+  }
+  .toc ol { list-style: none; padding: 0; margin: 0; counter-reset: tocitem; }
+  .toc ol li {
+    counter-increment: tocitem;
+    display: flex; align-items: baseline; gap: 0.4em;
+    padding: 0.18cm 0;
+  }
+  .toc ol li::before {
+    content: counter(tocitem, decimal-leading-zero);
+    font-family: 'JetBrains Mono', monospace;
+    color: var(--accent-bright);
+    font-size: 9pt;
+    width: 1.4cm;
+  }
+  .toc ol li a {
+    color: var(--ink);
+    text-decoration: none;
+    flex: 1;
+    border-bottom: 1px dotted var(--border);
+  }
+  .toc ol li a:after {
+    content: target-counter(attr(href), page);
+    float: right;
+    font-family: 'JetBrains Mono', monospace;
+    color: var(--muted);
+    font-size: 9pt;
+  }
+
+  /* ---- SECTIONS ---- */
+  section { page-break-inside: auto; }
+  section + section { padding-top: 0.5cm; }
+
+  h1.section-title {
+    font-family: 'JetBrains Mono', monospace;
+    text-transform: uppercase;
+    letter-spacing: 0.18em;
+    font-size: 18pt;
+    color: var(--accent);
+    border-left: 4px solid var(--accent);
+    padding: 0.1cm 0 0.1cm 0.5cm;
+    margin: 0.4cm 0 0.6cm 0;
+    page-break-after: avoid;
+  }
+  h1.section-title small {
+    display: block;
+    font-size: 8pt;
+    color: var(--dim);
+    letter-spacing: 0.4em;
+    margin-top: 0.15cm;
+  }
+  h2 {
+    font-family: 'JetBrains Mono', monospace;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    font-size: 11pt;
+    color: var(--ink);
+    margin-top: 0.7cm;
+    margin-bottom: 0.25cm;
+    page-break-after: avoid;
+  }
+  h2::before { content: "▎"; color: var(--accent-bright); margin-right: 0.18cm; }
+  h3 {
+    font-size: 10.5pt;
+    color: var(--accent);
+    margin: 0.5cm 0 0.2cm 0;
+    page-break-after: avoid;
+  }
+
+  p { margin: 0.2cm 0; }
+  ul, ol { margin: 0.2cm 0; padding-left: 0.7cm; }
+  li { margin: 0.1cm 0; }
+
+  code {
+    background: var(--code-bg);
+    border: 1px solid var(--code-border);
+    padding: 0 0.15cm;
+    border-radius: 2px;
+    color: var(--accent-bright);
+  }
+  pre {
+    background: var(--code-bg);
+    border: 1px solid var(--code-border);
+    border-left: 3px solid var(--accent);
+    padding: 0.3cm 0.4cm;
+    border-radius: 2px;
+    overflow-x: auto;
+    page-break-inside: avoid;
+    margin: 0.3cm 0;
+    line-height: 1.4;
+  }
+  pre code { background: none; border: none; padding: 0; color: var(--ink); }
+  kbd {
+    background: #fff;
+    border: 1px solid #999;
+    border-bottom-width: 2px;
+    border-radius: 3px;
+    padding: 0 0.15cm;
+    font-size: 8.5pt;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 0.3cm 0;
+    font-size: 9.5pt;
+    page-break-inside: auto;
+  }
+  th, td {
+    text-align: left;
+    padding: 0.18cm 0.25cm;
+    border-bottom: 1px solid var(--border);
+    vertical-align: top;
+  }
+  th {
+    background: #f4f3f7;
+    color: var(--accent);
+    text-transform: uppercase;
+    font-size: 8.5pt;
+    letter-spacing: 0.1em;
+    border-bottom: 2px solid var(--accent);
+  }
+  tr:nth-child(even) td { background: #fafafa; }
+
+  .callout {
+    border-left: 3px solid var(--accent);
+    background: #faf7ff;
+    padding: 0.3cm 0.4cm;
+    margin: 0.35cm 0;
+    page-break-inside: avoid;
+    font-size: 9.5pt;
+  }
+  .callout.warning { border-color: var(--warning); background: #fff7ed; }
+  .callout.danger  { border-color: var(--danger);  background: #fef2f2; }
+  .callout.success { border-color: var(--success); background: #f0fdf4; }
+  .callout strong  { color: var(--accent); text-transform: uppercase; font-size: 9pt; letter-spacing: 0.1em; }
+  .callout.warning strong { color: var(--warning); }
+  .callout.danger  strong { color: var(--danger); }
+  .callout.success strong { color: var(--success); }
+
+  .badge {
+    display: inline-block;
+    background: var(--accent);
+    color: #fff;
+    text-transform: uppercase;
+    letter-spacing: 0.15em;
+    font-size: 7.5pt;
+    padding: 0.05cm 0.18cm;
+    border-radius: 2px;
+    vertical-align: middle;
+    font-family: 'JetBrains Mono', monospace;
+  }
+  .badge.viewer   { background: #6b7280; }
+  .badge.operator { background: var(--warning); }
+  .badge.admin    { background: var(--danger); }
+
+  .columns2 { display: flex; gap: 0.6cm; }
+  .columns2 > * { flex: 1; }
+
+  hr { border: none; border-top: 1px dotted var(--border); margin: 0.5cm 0; }
+
+  .ascii {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 8pt;
+    white-space: pre;
+    line-height: 1.2;
+    color: var(--accent);
+    padding: 0.3cm;
+    background: #fafafa;
+    border: 1px solid var(--border);
+    page-break-inside: avoid;
+    margin: 0.3cm 0;
+  }
+</style>
+</head>
+<body>
+
+<!-- ============================== COVER ============================== -->
+<div class="cover">
+  <h1>W4RYA</h1>
+  <div class="tag">network flow analyzer · attack &amp; defense ctf</div>
+  <div class="subtitle">
+    Manual de uso completo.<br>
+    Operación durante competencia en vivo.
+  </div>
+  <div class="meta">
+    <span>v0.4.0 · hard fork of tulip · gpl-3.0</span>
+    <span class="right">no ai at runtime</span>
+  </div>
+</div>
+
+<!-- ============================== TOC ============================== -->
+<section class="toc">
+  <h2>Contenidos</h2>
+  <ol>
+    <li><a href="#about">Sobre w4rya</a></li>
+    <li><a href="#install">Instalación y primer arranque</a></li>
+    <li><a href="#auth">Auth y roles</a></li>
+    <li><a href="#config">Configuración inicial</a></li>
+    <li><a href="#flowlist">Vista principal: FlowList y filtros</a></li>
+    <li><a href="#flowview">Inspeccionar un flow</a></li>
+    <li><a href="#exploit">Test de exploits + script para farm</a></li>
+    <li><a href="#rules">Suricata rules + quick-block</a></li>
+    <li><a href="#attacks">Attack timeline</a></li>
+    <li><a href="#warroom">War-room (modo TV)</a></li>
+    <li><a href="#notes">Notas y alertas</a></li>
+    <li><a href="#audit">Audit log</a></li>
+    <li><a href="#backup">Backups</a></li>
+    <li><a href="#tests">Tests automatizados</a></li>
+    <li><a href="#trouble">Troubleshooting</a></li>
+    <li><a href="#shortcuts">Atajos de teclado</a></li>
+  </ol>
+</section>
+
+<!-- ============================== 1 ============================== -->
+<section id="about">
+  <h1 class="section-title">Sobre w4rya<small>capítulo 01</small></h1>
+  <p><strong>w4rya</strong> es un analizador de flujos de red diseñado para usarse durante competencias Attack/Defense (A/D) de CTF. Ingiere los pcaps que captura tu vulnbox, los descompone en flows, los enriquece con tags (incluyendo alerts de Suricata si está activo), y los expone en una UI web pensada para que un equipo opere en simultáneo: buscar el ataque que acaba de robar un flag, escribir una regla Suricata para bloquearlo, y rebotar el mismo exploit a los otros teams.</p>
+
+  <h2>Stack</h2>
+  <table>
+    <tr><th>Componente</th><th>Tecnología</th><th>Rol</th></tr>
+    <tr><td>Ingestor</td><td>Go (gopacket)</td><td>Lee pcaps, reconstruye flows, escribe a Timescale</td></tr>
+    <tr><td>API</td><td>Python Flask</td><td>Query + auth + config + rules + replay</td></tr>
+    <tr><td>Frontend</td><td>React + Vite + Tailwind</td><td>Operación en vivo</td></tr>
+    <tr><td>DB</td><td>TimescaleDB / Postgres</td><td>Persistencia + extensión C custom</td></tr>
+    <tr><td>Suricata</td><td>Container opcional</td><td>IDS/IPS, eve.json → enricher</td></tr>
+  </table>
+
+  <div class="callout danger">
+    <strong>Restricción permanente</strong>
+    <p>Este tool <strong>nunca</strong> llama a un servicio de IA/LLM en tiempo de ejecución. Las competencias A/D donde está pensado correr prohíben uso de IA durante el juego. Toda la clasificación es determinista: regex, signatures de Suricata, heurísticas estadísticas. PRs que agreguen llamadas a OpenAI/Anthropic/cualquier API de LLM serán rechazados.</p>
+  </div>
+
+  <h2>Basado en</h2>
+  <p>Hard fork de <strong>Tulip</strong> (<code>github.com/OpenAttackDefenseTools/tulip</code>) que a su vez es un fork de <strong>flower</strong> (<code>github.com/secgroup/flower</code>). Toda la arquitectura del ingestor y la base del frontend vienen de Tulip; w4rya agrega auth con roles, exploit testing, war-room mode, audit log, polish de UI dark hacking, y hardening para uso en vivo.</p>
+</section>
+
+<!-- ============================== 2 ============================== -->
+<section id="install">
+  <h1 class="section-title">Instalación y primer arranque<small>capítulo 02</small></h1>
+
+  <h2>Requisitos</h2>
+  <ul>
+    <li><strong>Docker</strong> 24+ con <code>docker compose</code> v2</li>
+    <li>4 GB RAM mínimo recomendado (8 GB para CTFs con mucho tráfico)</li>
+    <li>Tu usuario en el grupo <code>docker</code> para no usar sudo</li>
+  </ul>
+
+  <h2>Clonar y configurar</h2>
+<pre><code>git clone https://github.com/JCaleb2001/w4rya.git
+cd w4rya
+
+cp .env.example .env
+# editar .env: poner un W4RYA_SECRET_KEY (ver más abajo)</code></pre>
+
+  <p>El secret key es obligatorio. Genéralo con:</p>
+<pre><code>openssl rand -hex 32</code></pre>
+  <p>Copialo dentro de <code>.env</code> en la línea <code>W4RYA_SECRET_KEY=...</code>. Sin este valor el api se niega a arrancar.</p>
+
+  <h2>Levantar el stack</h2>
+<pre><code>docker compose up -d --build</code></pre>
+  <p>Esto levanta 6 containers: <code>timescale</code>, <code>api</code>, <code>frontend</code>, <code>assembler</code>, <code>enricher</code>, <code>flagids</code>. La primera vez tarda ~3-5 min compilando la extensión Postgres y el ingestor Go.</p>
+
+  <h2>Verificar que arrancó</h2>
+<pre><code>docker compose ps                          # los 6 containers en Up
+curl http://localhost:3001/api/healthz     # → {"db":"up","ok":true}</code></pre>
+
+  <h2>Crear el usuario admin inicial</h2>
+<pre><code>docker compose run --rm api python /app/auth/add_user.py &lt;username&gt;</code></pre>
+  <p>Prompts interactivos para password (no se ve mientras tipeas). El primer usuario que crees queda con role <code>admin</code> por back-compat (los entries sin <code>role:</code> default a admin). Usuarios futuros via el mismo script defaultean a <code>viewer</code>; usá <code>--role admin|operator|viewer</code> para especificar.</p>
+
+  <div class="callout warning">
+    <strong>Footgun</strong>
+    <p>NO uses <code>sudo</code> con ese comando. El file <code>auth/users.yaml</code> queda root-owned en el host. Si ya lo hiciste: <code>sudo chown -R $USER:$USER auth/</code>.</p>
+  </div>
+
+  <h2>Abrir la UI</h2>
+  <p>Navegá a <code>http://localhost:3001</code>. Login con el usuario que acabás de crear. Te redirige al dashboard.</p>
+
+  <div class="callout">
+    <strong>Variante con Suricata</strong>
+    <p>Para activar IDS/IPS, levantá con <code>docker compose -f docker-compose-suricata.yml up -d --build</code>. Necesitas también <code>SURICATA_DIR_HOST</code> en <code>.env</code> apuntando a un directorio host donde Suricata escribe logs.</p>
+  </div>
+</section>
+
+<!-- ============================== 3 ============================== -->
+<section id="auth">
+  <h1 class="section-title">Auth y roles<small>capítulo 03</small></h1>
+
+  <p>Tres tiers de permisos, en orden ascendente:</p>
+
+  <table>
+    <tr><th>Role</th><th>Lo que puede hacer</th></tr>
+    <tr><td><span class="badge viewer">viewer</span></td><td>Browse flows, ver dashboard, war-room. Postear notas. Login/logout.</td></tr>
+    <tr><td><span class="badge operator">operator</span></td><td>Todo lo anterior +&nbsp; editar Suricata rules, reload Suricata, test-exploit replay, quick-block IP, star flow.</td></tr>
+    <tr><td><span class="badge admin">admin</span></td><td>Todo +&nbsp; <code>/config</code> (services/teams/game vars) +&nbsp; <code>/audit</code>.</td></tr>
+  </table>
+
+  <p>La UI esconde los botones que no podés usar; el backend de todos modos los protege con 403.</p>
+
+  <h2>Crear usuarios</h2>
+<pre><code>docker compose run --rm api python /app/auth/add_user.py alice --role operator
+docker compose run --rm api python /app/auth/add_user.py bob   --role viewer
+docker compose restart api      # opcional, mtime cache también lo agarra</code></pre>
+
+  <h2>Rotar password</h2>
+  <p>Mismo comando con el mismo username: sobrescribe el hash y el role.</p>
+
+  <h2>Borrar un usuario</h2>
+  <p>Editar <code>auth/users.yaml</code> a mano, eliminar el bloque correspondiente, <code>docker compose restart api</code>.</p>
+
+  <h2>Rotar el secret key (invalida todas las sesiones)</h2>
+<pre><code>NEW=$(openssl rand -hex 32)
+sed -i "s|^W4RYA_SECRET_KEY=.*|W4RYA_SECRET_KEY=\"$NEW\"|" .env
+docker compose restart api</code></pre>
+
+  <h2>Rate limiting</h2>
+  <p>El endpoint <code>/login</code> tiene un token bucket en memoria: <strong>5 intentos fallidos en 5 minutos</strong> por cada par (ip, username) → 429 con <code>retry_after_sec</code>. Cada gunicorn worker tiene su propio contador, así que en práctica con 3 workers el techo efectivo es ~15 intentos. Suficiente para frenar scripting básico.</p>
+
+  <h2>Sessión cookie</h2>
+  <p>Nombre <code>w4rya_session</code>, httpOnly, SameSite=Lax, 7 días de vida. Para HTTPS poné <code>W4RYA_COOKIE_SECURE=1</code> en <code>.env</code> antes de servir por TLS.</p>
+</section>
+
+<!-- ============================== 4 ============================== -->
+<section id="config">
+  <h1 class="section-title">Configuración inicial<small>capítulo 04</small></h1>
+
+  <p>Antes de empezar a usar w4rya en un CTF real, necesitás configurar 3 cosas en <code>/config</code> (solo admin):</p>
+
+  <h2>Tab "game"</h2>
+  <p>Variables del juego que se aplican al ingestor y a la UI:</p>
+  <table>
+    <tr><th>Var</th><th>Qué es</th></tr>
+    <tr><td>flag_regex</td><td>Patrón regex que matchea el formato de flag del CTF. Ej: <code>[A-Z0-9]{31}=</code>. Validado al escribir (rechaza regex inválido y patrones ReDoS).</td></tr>
+    <tr><td>tick_start</td><td>Timestamp ISO8601 UTC del inicio del primer tick. Ej: <code>2024-11-30T13:00:00Z</code>.</td></tr>
+    <tr><td>tick_length</td><td>Duración de un tick en ms. Típico 180000 (3 min) o 240000 (4 min).</td></tr>
+    <tr><td>flag_lifetime</td><td>Cuántos ticks vive un flag antes de expirar. Default 5.</td></tr>
+    <tr><td>vm_ip</td><td>IP de tu vulnbox dentro de la red del juego.</td></tr>
+    <tr><td>team_id</td><td>Número/ID de tu equipo.</td></tr>
+    <tr><td>visualizer_url</td><td>Opcional: URL del visualizer del CTF (Faust style).</td></tr>
+    <tr><td>bpf</td><td>Opcional: BPF filter para limitar captura.</td></tr>
+  </table>
+
+  <div class="callout warning">
+    <strong>Restart required</strong>
+    <p><code>flag_regex</code> y <code>bpf</code> también los lee el container <code>assembler</code> al boot. Si los cambiás en vivo, la UI los aplica al instante pero el ingestor sigue con el valor viejo hasta que reinicies con <code>docker compose restart assembler</code>.</p>
+  </div>
+
+  <h2>Tab "services"</h2>
+  <p>Lista de servicios de TU equipo (los que el ingestor ve cuando rotura el tráfico que cae en tu vulnbox). Cada entry: <code>name</code>, <code>ip</code>, <code>port</code>, <code>notes</code>. Estos se usan para:</p>
+  <ul>
+    <li>Etiquetar flows con el service-tag correspondiente</li>
+    <li>Mostrar chips de filtrado en la sidebar del FlowList</li>
+    <li>Stats per-service (flows, attacks, flags-out en los últimos 5 ticks)</li>
+  </ul>
+  <p>Ejemplo: si tu vulnbox es <code>10.10.3.1</code> y el servicio "BIOMarkt" corre en <code>:18080</code>, agregás: <code>name=BIOMarkt ip=10.10.3.1 port=18080</code>.</p>
+
+  <h2>Tab "teams"</h2>
+  <p>Lista de equipos enemigos. Cada entry: <code>name</code>, <code>ip</code>, <code>notes</code>. Esta tabla solo se usa por el <strong>exploit replay</strong>: cuando dispares "test exploit" desde un flow, w4rya enumera estos team-ips y rebota el payload contra cada uno en su puerto original.</p>
+
+  <p>Sin teams configurados, el modal de exploit testing va a estar vacío.</p>
+</section>
+
+<!-- ============================== 5 ============================== -->
+<section id="flowlist">
+  <h1 class="section-title">Vista principal: FlowList y filtros<small>capítulo 05</small></h1>
+
+  <p>El dashboard tiene tres áreas:</p>
+  <div class="ascii">┌─ HEADER ──────────────────────────────────────────────────────┐
+│ [logo] w4rya  [search]  [date pickers]  [Last 5]  [Graph]    │
+│         [Attacks] [Warroom] [Config] [Rules] [Audit] [user]  │
+├──────────────────┬────────────────────────────────────────────┤
+│ FlowList sidebar │  Flow detail (Outlet)                     │
+│ ─────────────────│  ─────────────────────────────             │
+│ [Open filters]   │  Home / Flow / Diff / Corrie / Config …   │
+│ chips, search    │                                            │
+│                  │                                            │
+│ ▶ flow #1 ★      │                                            │
+│ ▶ flow #2        │                                            │
+│ ▶ flow #3        │                                            │
+└──────────────────┴────────────────────────────────────────────┘</div>
+
+  <h2>Buscar y filtrar</h2>
+  <p>El sidebar tiene un panel de filtros (botón "Open filters") con dos secciones:</p>
+  <ul>
+    <li><strong>Services</strong>: chips multi-select de los services configurados. Click toggle. Cada chip muestra mini-stats (flujos/⚔/🚩 últimos 5 ticks). El borde del chip refleja presión: violeta normal, amarillo bajo alerta Suricata, rojo si perdiste flag.</li>
+    <li><strong>Tags intersection</strong>: chips de tags (incluyendo <code>flag-in</code>, <code>flag-out</code>, <code>starred</code>, etc). Tres estados: deshabilitado, incluido, excluido (negro tachado). Modo AND/OR para múltiples tags.</li>
+  </ul>
+
+  <p>En el <strong>header</strong>:</p>
+  <ul>
+    <li><strong>Search bar</strong>: regex case-insensitive sobre el contenido de los flows (debounced 300ms)</li>
+    <li><strong>Date pickers</strong>: tick start / end manual</li>
+    <li><strong>"Last 5 ticks"</strong>: shortcut</li>
+  </ul>
+
+  <h2>Iconos de cada flow</h2>
+  <table>
+    <tr><th>Icon</th><th>Significa</th></tr>
+    <tr><td>❤ (rojo glow)</td><td>Starred</td></tr>
+    <tr><td>🔗 (violeta)</td><td>Tiene parent o child (flow encadenado)</td></tr>
+    <tr><td>service:port</td><td>Service tag resuelto (o "unknown")</td></tr>
+    <tr><td>Duración &gt;10s en rojo</td><td>Flow largo, posible interés</td></tr>
+  </table>
+
+  <h2>Polling</h2>
+  <p>El FlowList re-poolea cada 30s automáticamente. Si la pestaña está en background, el polling se pausa (visibility-aware).</p>
+</section>
+
+<!-- ============================== 6 ============================== -->
+<section id="flowview">
+  <h1 class="section-title">Inspeccionar un flow<small>capítulo 06</small></h1>
+
+  <p>Click en cualquier flow del sidebar abre <code>/flow/&lt;id&gt;</code> en el panel derecho.</p>
+
+  <h2>Estructura</h2>
+  <ol>
+    <li><strong>Toolbar secundario</strong> (sticky top): nav parent/child, selector de decoder (raw / http-decoded / etc), "Diff" para representaciones diferentes, "Copy as pwntools", "Copy as requests", <strong>"▶ test exploit"</strong>.</li>
+    <li><strong>Suricata card</strong> (si el flow disparó alguna regla): rule msg, rule id, action (alert / drop).</li>
+    <li><strong>Meta card</strong>: tags, tick, service, flags-in/out, src→dst, duración. Botón <strong>"block"</strong> al lado del src_ip que crea regla Suricata DROP automáticamente.</li>
+    <li><strong>Notes panel</strong>: scratchpad del equipo (ver §11).</li>
+    <li><strong>Flow items</strong>: cada request/response del flow renderizado según el modo elegido:</li>
+  </ol>
+
+  <table>
+    <tr><th>Modo</th><th>Cuándo</th></tr>
+    <tr><td>Plain</td><td>Texto crudo del wire. Default.</td></tr>
+    <tr><td>Hex</td><td>Hexdump (formato <code>twos</code>). Para protocolos binarios.</td></tr>
+    <tr><td>Web</td><td>HTTP only: renderiza el body en un &lt;iframe&gt; sandboxed. Útil para ver una respuesta HTML como la vería un browser.</td></tr>
+    <tr><td>PythonRequest</td><td>Genera el snippet equivalente con la lib <code>requests</code>. Copy → pegar en tu farm.</td></tr>
+  </table>
+
+  <h2>Highlights en el body</h2>
+  <p>El texto del flow tiene dos highlights automáticos:</p>
+  <ul>
+    <li>El query del search bar (si está activo) en violeta translúcido</li>
+    <li>Cualquier match del <code>flag_regex</code> en rojo translúcido (más vistoso, indica leak)</li>
+  </ul>
+
+  <h2>Export</h2>
+  <ul>
+    <li><strong>Download</strong>: bytes crudos del flow item, archivo binario</li>
+    <li><strong>Download body</strong> (solo Web): body decodificado</li>
+    <li><strong>Open in CC</strong>: abre el contenido en CyberChef (gchq.github.io). <em>Nota</em>: este botón envía data a github.io — no clickear con flags reales si te preocupa privacidad.</li>
+    <li><strong>Copy as pwntools</strong> / <strong>Copy as requests</strong>: snippets listos para tu farm</li>
+  </ul>
+
+  <h2>Diff entre representaciones</h2>
+  <p>Si un flow tiene varios decoders (ej: <code>raw</code> + <code>http-decoded</code>), podés diff entre ellos con el botón ⚡. Útil para detectar cambios en encoding (ej: gzip + raw).</p>
+
+  <h2>Atajos en FlowView</h2>
+  <table>
+    <tr><th>Tecla</th><th>Acción</th></tr>
+    <tr><td><kbd>j</kbd> / <kbd>k</kbd></td><td>Next / prev flow en sidebar</td></tr>
+    <tr><td><kbd>h</kbd> / <kbd>l</kbd></td><td>Prev / next item dentro del flow</td></tr>
+    <tr><td><kbd>w</kbd></td><td>Scroll al flow actual en sidebar</td></tr>
+    <tr><td><kbd>x</kbd></td><td>Toggle star</td></tr>
+    <tr><td><kbd>m</kbd></td><td>Rotar entre decoders</td></tr>
+    <tr><td><kbd>d</kbd></td><td>Diff view del flow</td></tr>
+  </table>
+</section>
+
+<!-- ============================== 7 ============================== -->
+<section id="exploit">
+  <h1 class="section-title">Test de exploits + script para farm<small>capítulo 07</small></h1>
+
+  <p>El feature más A/D-específico. Workflow esperado:</p>
+  <ol>
+    <li>Un equipo enemigo te exploitea — ves un flow en el FlowList con tag <code>flag-out</code> o una alerta Suricata.</li>
+    <li>Abrís el flow, identificás el payload del request enemigo.</li>
+    <li>Click <strong>"▶ test exploit"</strong>. Se abre el modal.</li>
+    <li>El modal toma los items con <code>direction=c</code> (cliente → servidor) y los concatena como payload. Te muestra preview (bytes, puerto, src/dst originales).</li>
+    <li>Seleccionás contra qué teams disparar (default: todos los <code>/config/teams</code>). Setteás timeout (default 3s).</li>
+    <li><strong>"▶ replay against N target(s)"</strong> → fan-out paralelo (max 16 workers, deadline overall 45s &lt; gunicorn -t 60s).</li>
+    <li>La tabla de resultados se ordena: hits primero, después OK, después errores. Cada fila muestra: team, target IP, status (✓ FLAG / ○ no flag / ! ERR), latencia, response size, conteo de flags capturadas, excerpt.</li>
+    <li>Click una fila → expande con el body completo y los flag values encontrados.</li>
+  </ol>
+
+  <h2>Descargar el exploit para el farm</h2>
+  <p>El botón <strong>"↓ download exploit script"</strong> baja un <code>.py</code> standalone (sin dependencias externas) con:</p>
+  <ul>
+    <li>El payload embebido como hex literal</li>
+    <li>La lista de teams configurados, baked in</li>
+    <li>El flag_regex</li>
+    <li>Un <code>main()</code> que loopea por team, abre socket, sendall, captura, regex-matchea, imprime</li>
+    <li>Un comentario <code># TODO: pipe captured into your farm/submitter</code> donde plug-ueás tu lógica de submission</li>
+  </ul>
+
+  <div class="callout warning">
+    <strong>Límite del replay actual</strong>
+    <p>El payload se envía tal cual fue capturado. Funciona para exploits stateless. Si el exploit dependía de un flagid específico por-team, vas a necesitar editar el script generado para inyectar el flagid correcto (esto está en roadmap como "tokenized flagid replay").</p>
+  </div>
+
+  <h2>Caps</h2>
+  <ul>
+    <li>MAX_TARGETS: 64 por replay</li>
+    <li>Per-target timeout: max 15s</li>
+    <li>Overall deadline: 45s</li>
+    <li>Response truncado a 256 KB</li>
+    <li>Excerpt mostrado: primeros 1 KB</li>
+  </ul>
+</section>
+
+<!-- ============================== 8 ============================== -->
+<section id="rules">
+  <h1 class="section-title">Suricata rules + quick-block<small>capítulo 08</small></h1>
+
+  <p><code>/rules</code> permite gestionar el file <code>suricata-rules/suricata.rules</code> sin tocarlo a mano. Solo operator/admin.</p>
+
+  <h2>Vista</h2>
+  <ol>
+    <li><strong>Header</strong>: path del file, count de rules, botón "+ new rule"</li>
+    <li><strong>Suricata control bar</strong>: status del socket (reachable / offline), botón "▶ reload now", toggle "auto-reload on save"</li>
+    <li><strong>Templates dropdown</strong>: 5 reglas pre-cargadas (SQLi UNION SELECT, path traversal, /etc/passwd, shell metachars, drop sqlmap UA)</li>
+    <li><strong>Tabla de rules</strong>: enable-toggle, sid, action (color-coded: drop=rojo, alert=violeta), msg, edit/delete</li>
+  </ol>
+
+  <h2>Crear regla</h2>
+  <p>Click "+ new rule" o pick un template → se abre form con textarea. Pegás Suricata raw rule:</p>
+<pre><code>alert http any any -&gt; any any (msg:"path traversal"; flow:to_server;
+  content:"../"; http_uri; metadata: tag path_traversal; rev:1;)</code></pre>
+  <p>Si no incluís <code>sid:N;</code>, w4rya te auto-asigna uno desde 1.000.000. Si los parens están desbalanceados (rule pegada mal), el save rechaza con error (no quiere splicear sid en medio de un content).</p>
+
+  <h2>Enable / Disable / Delete</h2>
+  <p>Toggle en cada fila. "Disable" prepende <code># </code> a la línea (convención Suricata). "Delete" la elimina por completo.</p>
+
+  <h2>Quick-block desde un flow</h2>
+  <p>En <code>/flow/&lt;id&gt;</code>, al lado del src_ip, hay un botón <strong>"block"</strong>. Confirm → genera automáticamente:</p>
+<pre><code>drop ip &lt;src_ip&gt; any -&gt; any any (msg:"w4rya:block:&lt;src_ip&gt;@&lt;ts&gt;";
+  metadata: tag blocked; sid:&lt;auto&gt;; rev:1;)</code></pre>
+  <p>Visual feedback: <code>✓ blocked</code> verde por 3s, después vuelve a "block".</p>
+
+  <h2>Auto-reload</h2>
+  <p>Activando el toggle <strong>auto-reload on save</strong>, cualquier CRUD de rules dispara también <code>reload-rules</code> sobre el socket unix de Suricata (<code>/var/run/suricata/suricata-command.socket</code>). El socket lo expone Suricata con el flag <code>--set unix-command.enabled=yes</code> (ya wired en el compose).</p>
+
+  <p>Si Suricata no está corriendo, el save igual funciona y la respuesta incluye <code>reload.kind=socket_missing</code>. La UI muestra el error sin romper el save.</p>
+
+  <div class="callout">
+    <strong>Reload manual</strong>
+    <p>Si tenés auto-reload OFF y guardás cambios, podés reloadear cuando quieras con el botón <strong>"▶ reload now"</strong> del control bar.</p>
+  </div>
+</section>
+
+<!-- ============================== 9 ============================== -->
+<section id="attacks">
+  <h1 class="section-title">Attack timeline<small>capítulo 09</small></h1>
+
+  <p>Vista cronológica de eventos hostiles en <code>/attacks</code>. Un "evento" es cualquier flow que:</p>
+  <ul>
+    <li>Matcheó una regla Suricata (signatures no vacío), OR</li>
+    <li>Llevó un flag (tag <code>flag-out</code>)</li>
+  </ul>
+
+  <h2>Filtros</h2>
+  <ul>
+    <li><strong>Range presets</strong>: last 5 / 10 / 30 / 60 ticks. Default 10.</li>
+    <li><strong>Service dropdown</strong>: filtrar por un service específico, o "all".</li>
+    <li>Auto-refresh cada 20s, polling pausado en tabs background.</li>
+  </ul>
+
+  <h2>Cada fila</h2>
+  <table>
+    <tr><th>Col</th><th>Contenido</th></tr>
+    <tr><td>time</td><td>Hora local del flow</td></tr>
+    <tr><td>type</td><td>Chip de color: ⚔ ALERT / 🚩 LEAK / 🚩+⚔ ambos</td></tr>
+    <tr><td>attacker</td><td>src_ip:src_port</td></tr>
+    <tr><td>service</td><td>Resolved al name configurado</td></tr>
+    <tr><td>detail</td><td>Rule msgs (action color-coded) + flag count si aplica</td></tr>
+    <tr><td>flow</td><td>Link "open →" al detalle</td></tr>
+  </table>
+
+  <p>Si no hay servicios configurados o si el range no captura nada, mostrará "no events in range — try a wider tick window".</p>
+</section>
+
+<!-- ============================== 10 ============================== -->
+<section id="warroom">
+  <h1 class="section-title">War-room (modo TV)<small>capítulo 10</small></h1>
+
+  <p>Pantalla fullscreen pensada para una TV montada al lado del equipo. Sin sidebar, sin header — todo el espacio para datos en tiempo real.</p>
+
+  <h2>Layout 2×2</h2>
+  <table>
+    <tr><th>Panel</th><th>Qué muestra</th></tr>
+    <tr><td>Services grid</td><td>Chips grandes con stats flows/⚔/🚩, color cascada</td></tr>
+    <tr><td>Incoming attacks</td><td>Feed cronológico de los últimos 20 eventos</td></tr>
+    <tr><td>Top attackers</td><td>Bar chart por count, con tally de flags por atacante</td></tr>
+    <tr><td>Flag leaks</td><td>Cards rojas para cada leak, o "✓ no flag leaks" verde si todo OK</td></tr>
+  </table>
+
+  <h2>Top bar</h2>
+  <p>Brand + tick actual + barra de progreso del tick (% completado) + total events + leaks count (rojo glow si &gt;0) + reloj wall-clock.</p>
+
+  <h2>Auto-refresh</h2>
+  <p>Cada 10s. Polling pausado si la pestaña pierde foco (improbable en modo TV, pero por consistencia).</p>
+
+  <h2>Exit</h2>
+  <p>Link "← exit" en footer vuelve a <code>/</code>. Esc no cierra (no es modal).</p>
+</section>
+
+<!-- ============================== 11 ============================== -->
+<section id="notes">
+  <h1 class="section-title">Notas y alertas<small>capítulo 11</small></h1>
+
+  <h2>Notes por flow</h2>
+  <p>Panel debajo del Meta card en <code>/flow/&lt;id&gt;</code>. Cualquier usuario autenticado puede postear, hasta 10000 chars. Útil para coordinar: "este SQLi funciona", "ya tengo exploit para esto", "@alice mirá", etc.</p>
+
+  <p>El author del note se setea automáticamente (session user). Solo el author puede borrar su propia note (admin no puede borrar notas ajenas).</p>
+
+  <h2>Toasts globales</h2>
+  <p>Sistema de notificaciones bottom-right de la pantalla. 4 severidades con color: info (violeta), success (verde), warning (ámbar), danger (rojo). Auto-dismiss después de N segundos o click ✕.</p>
+
+  <p>Algunas toasts incluyen un link "open →" que navega directo al flow relacionado.</p>
+
+  <h2>Flag-leak alarm automática</h2>
+  <p><code>FlagLeakWatcher</code> es un componente background que polea <code>/query?tags_include=flag-out</code> cada 15s. La primera vez pobla un "seen set" sin disparar nada (no quiere alertar de leaks históricos). De ahí en más, cualquier nuevo flow con <code>flag-out</code> dispara toast danger con link.</p>
+
+  <p>El polling se pausa cuando la tab está hidden.</p>
+</section>
+
+<!-- ============================== 12 ============================== -->
+<section id="audit">
+  <h1 class="section-title">Audit log<small>capítulo 12</small></h1>
+
+  <p><code>/audit</code> — solo admin. Append-only tabla de toda acción autenticada que escribe estado:</p>
+
+  <table>
+    <tr><th>Acción</th><th>Cuándo</th></tr>
+    <tr><td>auth.login</td><td>Login exitoso (incluye role + ip)</td></tr>
+    <tr><td>auth.login_fail</td><td>Password incorrecto (incluye ip + attempt count)</td></tr>
+    <tr><td>auth.login_blocked</td><td>Intento durante lockout por rate-limit</td></tr>
+    <tr><td>auth.logout</td><td>Logout explícito</td></tr>
+    <tr><td>config.set</td><td>PUT /config (incluye qué keys cambiaron)</td></tr>
+    <tr><td>config.services</td><td>PUT /config/services (count)</td></tr>
+    <tr><td>config.teams</td><td>PUT /config/teams (count)</td></tr>
+    <tr><td>rules.add</td><td>Nueva rule (target = sid)</td></tr>
+    <tr><td>rules.update</td><td>Edit (target = sid, details = qué cambió)</td></tr>
+    <tr><td>rules.delete</td><td>Borrado (target = sid)</td></tr>
+    <tr><td>rules.block_ip</td><td>Quick-block (target = ip)</td></tr>
+    <tr><td>suricata.reload</td><td>Reload manual</td></tr>
+    <tr><td>attack.replay</td><td>Exploit testing (target = flow_id, details = target_count + timeout)</td></tr>
+  </table>
+
+  <h2>Filtros</h2>
+  <ul>
+    <li><strong>Actor</strong>: dropdown poblado desde <code>/audit/actors</code></li>
+    <li><strong>Action</strong>: prefix match (auth.*, rules.*, etc)</li>
+    <li><strong>Range</strong>: presets 15m / 1h / 6h / 24h / all</li>
+  </ul>
+
+  <h2>Export CSV</h2>
+  <p>Botón <strong>"↓ export csv"</strong> baja un CSV con los filtros actuales aplicados. Cap 50.000 filas. Filename auto-timestamp UTC.</p>
+</section>
+
+<!-- ============================== 13 ============================== -->
+<section id="backup">
+  <h1 class="section-title">Backups<small>capítulo 13</small></h1>
+
+  <p>Script <code>scripts/backup.sh</code> snapshot atómico de toda la state operacional:</p>
+  <ul>
+    <li><code>auth/users.yaml</code> (usuarios + roles + hashes)</li>
+    <li><code>suricata-rules/*.rules</code> (todas tus reglas)</li>
+    <li><code>.env</code> (con W4RYA_SECRET_KEY — sensible)</li>
+    <li><code>pg_dump</code> de las 3 tablas DB: <code>app_config</code>, <code>flow_notes</code>, <code>audit_log</code></li>
+  </ul>
+
+  <p>Output: <code>./backups/w4rya_&lt;UTCISO&gt;.tgz</code>. Directorio <code>backups/</code> gitignored (contiene secrets).</p>
+
+  <h2>Uso</h2>
+<pre><code>./scripts/backup.sh
+# o customizando dir:
+BACKUP_DIR=/srv/w4rya-bk ./scripts/backup.sh</code></pre>
+
+  <h2>Cron sample durante CTF</h2>
+<pre><code># cada 5 min
+*/5 * * * * cd /home/user/w4rya &amp;&amp; ./scripts/backup.sh &gt;&gt; /tmp/w4rya-bk.log 2&gt;&amp;1</code></pre>
+
+  <h2>Restore</h2>
+<pre><code>tar xzvf w4rya_20260524T200000Z.tgz -C /tmp/restore
+# revisar los .sql, después:
+docker compose exec -T timescale psql -U w4rya -d w4rya &lt; /tmp/restore/app_config.sql
+docker compose exec -T timescale psql -U w4rya -d w4rya &lt; /tmp/restore/audit_log.sql
+docker compose exec -T timescale psql -U w4rya -d w4rya &lt; /tmp/restore/flow_notes.sql
+cp /tmp/restore/users.yaml auth/users.yaml
+cp /tmp/restore/*.rules    suricata-rules/
+docker compose restart api</code></pre>
+
+  <div class="callout warning">
+    <strong>Cuidado dónde van los tgz</strong>
+    <p>El tarball contiene <code>.env</code> + bcrypt hashes. Si los compartís off-host, encriptalos primero (<code>gpg --symmetric</code>) o usá storage con ACL.</p>
+  </div>
+</section>
+
+<!-- ============================== 14 ============================== -->
+<section id="tests">
+  <h1 class="section-title">Tests automatizados<small>capítulo 14</small></h1>
+
+  <p>Suite pytest dentro del container api. 29 tests, ~0.3 segundos.</p>
+
+  <p>Cubre las pure-function paths que más fácil rompen en silencio:</p>
+  <ul>
+    <li><code>rate_limit</code>: bucket, expiry, clear</li>
+    <li><code>app_config.coerce_scalar</code>: int, bool variants, regex valid/invalid/ReDoS, string passthrough</li>
+    <li><code>rules.parse_one</code>: rule válido, disabled, blank, comentario, garbage-preserves-raw</li>
+    <li><code>rules._inject_sid</code>: adds-when-missing, no-op-when-present, no-dup-rev, refuses-unbalanced, no-parens</li>
+    <li><code>rules</code> round-trip: add+list+toggle+delete sobre tmp file, block_ip happy + quote-injection guard</li>
+    <li><code>attack</code>: hex block format/wrap/empty, build_payload empty + client-only filter</li>
+  </ul>
+
+  <h2>Correrlos</h2>
+<pre><code>docker compose exec api python -m pytest /app/tests/ -v</code></pre>
+
+  <p>Salida esperada: <code>29 passed in 0.3s</code>.</p>
+</section>
+
+<!-- ============================== 15 ============================== -->
+<section id="trouble">
+  <h1 class="section-title">Troubleshooting<small>capítulo 15</small></h1>
+
+  <h2>El api no arranca</h2>
+  <ul>
+    <li><strong>"W4RYA_SECRET_KEY env var is required"</strong> → poné un valor en <code>.env</code> con <code>openssl rand -hex 32</code></li>
+    <li><strong>"connection to server at … port 5432 failed"</strong> → timescale tarda 30-60s en bootear la primera vez; los reintentos del api lo recuperan. Si persiste, mirar <code>docker compose logs timescale</code></li>
+  </ul>
+
+  <h2>Build de Docker falla con "Temporary failure in name resolution"</h2>
+  <p>BuildKit no resuelve DNS en algunos hosts. Workaround:</p>
+<pre><code>docker build --network=host -t w4rya-api:latest \
+  -f services/api/Dockerfile-api services/api/</code></pre>
+
+  <h2>El healthcheck dice "unhealthy"</h2>
+<pre><code>docker inspect --format='{{.State.Health.Status}}' w4rya-api-1
+docker compose logs api | tail -50</code></pre>
+  <p>Si el endpoint <code>/healthz</code> devuelve 503, suele ser conn pool a timescale roto. Restartear: <code>docker compose restart api</code>.</p>
+
+  <h2>Me bloqueé en /login</h2>
+  <p>5 fails → 5 min lockout por (ip, username). Esperar, o restartear api para limpiar buckets en memoria: <code>docker compose restart api</code>.</p>
+
+  <h2>Files root-owned después de sudo</h2>
+<pre><code>sudo chown -R $USER:$USER auth/ suricata-rules/ backups/</code></pre>
+
+  <h2>Suricata no recibe rules nuevos</h2>
+  <p>Verificá: (1) suricata está corriendo (<code>docker compose -f docker-compose-suricata.yml ps</code>), (2) la file <code>suricata-rules/suricata.rules</code> contiene tu cambio, (3) el socket existe (<code>ls suricata-run/</code>), (4) reload manual con el botón "▶ reload now". Si nada, restart suricata.</p>
+
+  <h2>El frontend muestra "no events / no services configured"</h2>
+  <p>Setup primer vez: tenés que configurar services en <code>/config → services</code>. Los pcaps de ejemplo (en <code>services/test_pcap</code>) usan IPs ficticias; mappealas a names en la UI.</p>
+
+  <h2>Atacantes ven mi w4rya</h2>
+  <p>NO lo expongas a internet. Es para LAN/VPN team-internal. Si DEBE ser remoto: ponelo detrás de un reverse proxy con TLS + setear <code>W4RYA_COOKIE_SECURE=1</code> en <code>.env</code>. Sin TLS la cookie viaja en claro.</p>
+</section>
+
+<!-- ============================== 16 ============================== -->
+<section id="shortcuts">
+  <h1 class="section-title">Atajos de teclado<small>capítulo 16</small></h1>
+
+  <div class="columns2">
+    <div>
+      <h3>FlowList sidebar</h3>
+      <table>
+        <tr><td><kbd>j</kbd></td><td>Down</td></tr>
+        <tr><td><kbd>k</kbd></td><td>Up</td></tr>
+        <tr><td><kbd>w</kbd></td><td>Scroll a flow actual</td></tr>
+        <tr><td><kbd>x</kbd></td><td>Star toggle</td></tr>
+        <tr><td><kbd>r</kbd></td><td>Refetch</td></tr>
+        <tr><td><kbd>i</kbd></td><td>Toggle filtro <code>flag-in</code></td></tr>
+        <tr><td><kbd>o</kbd></td><td>Toggle filtro <code>flag-out</code></td></tr>
+        <tr><td><kbd>t</kbd></td><td>Toggle filtro <code>starred</code></td></tr>
+      </table>
+
+      <h3>Header</h3>
+      <table>
+        <tr><td><kbd>s</kbd></td><td>Focus search bar</td></tr>
+        <tr><td><kbd>esc</kbd></td><td>Blur input activo</td></tr>
+        <tr><td><kbd>a</kbd></td><td>Last 5 ticks</td></tr>
+        <tr><td><kbd>c</kbd></td><td>Clear time pickers</td></tr>
+        <tr><td><kbd>g</kbd></td><td>Graph view (Corrie)</td></tr>
+      </table>
+    </div>
+    <div>
+      <h3>FlowView (panel derecho)</h3>
+      <table>
+        <tr><td><kbd>h</kbd></td><td>Prev item</td></tr>
+        <tr><td><kbd>l</kbd></td><td>Next item</td></tr>
+        <tr><td><kbd>m</kbd></td><td>Rotar decoder</td></tr>
+        <tr><td><kbd>d</kbd></td><td>Diff view</td></tr>
+        <tr><td><kbd>f</kbd></td><td>Load to first diff slot</td></tr>
+        <tr><td><kbd>e</kbd></td><td>Load to second diff slot</td></tr>
+      </table>
+
+      <h3>Modal de exploit</h3>
+      <table>
+        <tr><td><kbd>esc</kbd></td><td>Close</td></tr>
+        <tr><td><kbd>tab</kbd></td><td>Cycle entre botones del modal (focus-trap)</td></tr>
+      </table>
+    </div>
+  </div>
+
+  <hr>
+
+  <div class="callout success">
+    <strong>Fin del manual</strong>
+    <p>Mantenido en sincronía con la versión del código en <code>CLAUDE.md</code>. Si encontrás divergencias, abrir issue en el repo.</p>
+  </div>
+</section>
+
+</body>
+</html>
