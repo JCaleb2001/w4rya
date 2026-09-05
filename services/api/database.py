@@ -275,6 +275,7 @@ class Connection(psycopg.Connection):
             WHERE fi.flow_id = %(flow_id)s
                 AND fi.id > fid_pack_low(%(time_start)s)
                 AND fi.id < fid_pack_high(%(time_end)s)
+            ORDER BY fi.id
         """
 
         parameters = {
