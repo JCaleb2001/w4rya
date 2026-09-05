@@ -305,11 +305,18 @@ export function Header() {
         </div>
       </Link>
       {hasRole(useGetMeQuery().data?.role, "admin") && (
-        <Link to="/audit">
-          <div className="hax-btn">
-            Audit
-          </div>
-        </Link>
+        <>
+          <Link to="/audit">
+            <div className="hax-btn">
+              Audit
+            </div>
+          </Link>
+          <Link to="/users">
+            <div className="hax-btn" title="manage team accounts">
+              Users
+            </div>
+          </Link>
+        </>
       )}
       <div className="ml-auto mr-4" style={{ display: "flex" }}>
         <div className="mr-4">

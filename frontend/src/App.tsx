@@ -16,25 +16,46 @@ import { FlowView } from "./pages/FlowView";
 import { DiffView } from "./pages/DiffView";
 import { Corrie } from "./components/Corrie";
 import { Login } from "./pages/Login";
+import { Setup } from "./pages/Setup";
+import { Users } from "./pages/Users";
 import { Config } from "./pages/Config";
 import { Rules } from "./pages/Rules";
 import { Attacks } from "./pages/Attacks";
 import { Audit } from "./pages/Audit";
 import { Warroom } from "./pages/Warroom";
-import { useGetMeQuery } from "./api";
+import { useGetMeQuery, useGetSetupStatusQuery } from "./api";
 import { Toasts } from "./components/Toasts";
 import { FlagLeakWatcher } from "./components/FlagLeakWatcher";
 
+function SessionSplash({ label }: { label: string }) {
+  return (
+    <div className="min-h-screen bg-hax-bg text-hax-muted flex items-center justify-center font-mono text-xs uppercase tracking-[0.3em]">
+      <span className="text-hax-accent-bright">$</span>&nbsp;{label}<span className="hax-cursor"></span>
+    </div>
+  );
+}
+
 function RequireAuth({ children }: { children: JSX.Element }) {
   const { data, isLoading, isError } = useGetMeQuery();
+  const unauthed = !isLoading && (isError || !data?.user);
+  // Only ask about setup once we know there is no session — an authenticated
+  // user never needs it, and the query would be a wasted request on every load.
+  const { data: setup, isLoading: setupLoading } = useGetSetupStatusQuery(undefined, {
+    skip: !unauthed,
+  });
+
   if (isLoading) {
-    return (
-      <div className="min-h-screen bg-hax-bg text-hax-muted flex items-center justify-center font-mono text-xs uppercase tracking-[0.3em]">
-        <span className="text-hax-accent-bright">$</span>&nbsp;establishing session<span className="hax-cursor"></span>
-      </div>
-    );
+    return <SessionSplash label="establishing session" />;
   }
-  if (isError || !data?.user) {
+  if (unauthed) {
+    if (setupLoading) {
+      return <SessionSplash label="checking install" />;
+    }
+    // Zero accounts means a fresh install, not a wrong password: send people
+    // to the wizard instead of a login form that could never succeed.
+    if (setup?.needs_setup) {
+      return <Navigate to="/setup" replace />;
+    }
     return <Navigate to="/login" replace />;
   }
   return children;
@@ -46,6 +67,7 @@ function App() {
     <BrowserRouter>
       <Routes>
         <Route path="/login" element={<Login />} />
+        <Route path="/setup" element={<Setup />} />
         <Route
           path="/warroom"
           element={
@@ -116,6 +138,14 @@ function App() {
             element={
               <Suspense>
                 <Audit />
+              </Suspense>
+            }
+          />
+          <Route
+            path="users"
+            element={
+              <Suspense>
+                <Users />
               </Suspense>
             }
           />
