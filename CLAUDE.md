@@ -335,6 +335,10 @@ If you rebuild and hit `Temporary failure in name resolution` from pip, BuildKit
 docker build --network=host -t w4rya-api:latest -f services/api/Dockerfile-api services/api/
 ```
 
+A **slow** link fails differently, and the DNS workaround above does nothing for it. `docker compose build` builds all six services at once; on a thin connection (a NAT'd VM, venue wifi) ten concurrent downloads share the pipe, and yarn 1.x abandons any tarball that goes 30 s without bytes — `ESOCKETTIMEDOUT`, usually on whichever package is unlucky, with `There appears to be trouble with your network connection` above it. DNS is fine in this case: `Resolving packages` completes in seconds, it's `Fetching packages` that dies. `Dockerfile-frontend` now passes `--network-timeout 600000 --network-concurrency 4`, and `install.sh` recognises the timeout signatures and rebuilds one service at a time, which gives each the whole link.
+
+Both diagnoses read only the slice of `install.log` written by the current build (`log_mark`). The log is append-only across runs, so matching the whole file would let a fixed error keep selecting its workaround forever. They match with a here-string, not a pipe: under `pipefail`, `grep -q` exits at the first match and the SIGPIPE'd producer makes the pipeline report 141, so a piped test reads as false exactly when it matches.
+
 `services/api/requirements.txt` is **pinned with `==`** (direct deps only, not a transitive lockfile) so a new upstream Flask/psycopg release can't break the build on a machine that installs tomorrow. Refresh with `docker run --rm w4rya-api:latest pip freeze`.
 
 ### Smoke test (`scripts/smoke.sh`)

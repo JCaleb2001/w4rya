@@ -370,11 +370,33 @@ do_install() {
   # --- build + up ---------------------------------------------------------
   if [[ $DO_BUILD -eq 1 ]]; then
     step "Building images (first run takes a while — it compiles a Postgres extension)"
+    local log_mark; log_mark=$(( $(wc -l <"$LOG" 2>/dev/null || echo 0) + 1 ))
     if ! compose build >>"$LOG" 2>&1; then
-      if grep -qE 'Temporary failure in name resolution|Could not resolve host|Failed to establish a new connection' "$LOG"; then
+      # $LOG is append-only across runs, so diagnose from what THIS build wrote:
+      # a stale error from an earlier attempt would otherwise pick the workaround
+      # for a failure that has already been fixed. Held in a variable and matched
+      # with a here-string rather than piped — under `pipefail`, `grep -q` exits
+      # on the first match and the SIGPIPE'd producer would make the whole
+      # pipeline report 141, i.e. every one of these tests would read as false.
+      local build_out; build_out="$(tail -n "+$log_mark" "$LOG")"
+      if grep -qE 'Temporary failure in name resolution|Could not resolve host|Failed to establish a new connection' <<<"$build_out"; then
         warn "BuildKit's DNS is wedged — a known issue on some hosts. Retrying with --network=host."
         DOCKER_BUILDKIT=0 compose build >>"$LOG" 2>&1 \
           || { tail -30 "$LOG"; die "build failed even with the workaround — see $LOG"; }
+      elif grep -qE 'ESOCKETTIMEDOUT|ETIMEDOUT|There appears to be trouble with your network connection|context deadline exceeded|TLS handshake timeout|i/o timeout' <<<"$build_out"; then
+        # Not a broken network — a slow one. Compose builds every service at once,
+        # so on a thin link (a NAT'd VM, hotel wifi, a CTF venue) ten downloads
+        # share the pipe and each one stalls past its own timeout. Building one
+        # service at a time gives each the whole link.
+        warn "a download timed out — the parallel build is starving your connection."
+        info "retrying one service at a time; slower, but it finishes"
+        local svc
+        for svc in $(compose config --services); do
+          info "building $svc"
+          # Services that only pull an image (suricata) are a no-op here, not an error.
+          compose build "$svc" >>"$LOG" 2>&1 \
+            || { tail -30 "$LOG"; die "build failed on $svc even one at a time — see $LOG"; }
+        done
       else
         tail -30 "$LOG"
         die "build failed — see $LOG"
