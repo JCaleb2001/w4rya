@@ -234,7 +234,7 @@ preflight() {
 
   local root avail_kb avail_gb
   root="$(docker info -f '{{.DockerRootDir}}' 2>/dev/null || echo /var/lib/docker)"
-  avail_kb="$(df -Pk "$root" 2>/dev/null | awk 'NR==2 {print $4}')"
+  avail_kb="$(df -Pk "$root" 2>/dev/null | awk 'NR==2 {print $4}')" || avail_kb=""
   if [[ -n "${avail_kb:-}" ]]; then
     avail_gb=$((avail_kb / 1024 / 1024))
     if   [[ $avail_gb -lt 3 ]];  then die "only ${avail_gb} GB free on $root — the images need ~5 GB"
