@@ -95,11 +95,20 @@ def current_user() -> Optional[str]:
 
 
 def current_role() -> str:
-    """Role of the currently authed user. 'viewer' if unauthed."""
+    """Role of the currently authed user. 'viewer' if unauthed or unknown."""
     user = current_user()
     if not user:
         return "viewer"
-    record = _load_users().get(user) or {}
+    record = _load_users().get(user)
+    if record is None:
+        # The session names an account that no longer exists — a teammate who
+        # was deleted while holding a valid cookie. This is NOT the legacy
+        # roleless case: `.get(user) or {}` used to collapse the two, so a
+        # deleted user fell through to LEGACY_ROLE and came back as *admin*.
+        # Fail closed; require_auth below rejects them outright anyway.
+        return "viewer"
+    if not isinstance(record, dict):
+        return "viewer"
     role = (record.get("role") or LEGACY_ROLE).strip()
     if role not in ROLE_RANK:
         role = "viewer"
@@ -116,7 +125,15 @@ def require_auth():
         return None
     if request.path in PUBLIC_PATHS:
         return None
-    if current_user() is None:
+    user = current_user()
+    if user is None:
+        return jsonify({"error": "unauthorized"}), 401
+    # Sessions are stateless signed cookies, so deleting an account does not
+    # invalidate the cookies already issued for it. Check the account still
+    # exists on every request: without this, a removed teammate keeps full
+    # access until their 7-day cookie expires.
+    if _load_users().get(user) is None:
+        session.clear()
         return jsonify({"error": "unauthorized"}), 401
     return None
 

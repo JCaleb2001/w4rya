@@ -82,7 +82,18 @@ def _locked():
     """Exclusive advisory lock shared by every process touching users.yaml."""
     parent = os.path.dirname(USERS_FILE) or "."
     os.makedirs(parent, exist_ok=True)
-    fd = os.open(USERS_FILE + ".lock", os.O_CREAT | os.O_RDWR, 0o600)
+    lock_path = USERS_FILE + ".lock"
+    existed = os.path.exists(lock_path)
+    fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+    if not existed:
+        # Same reason as _write_atomic: the api runs as root inside the
+        # container over a host bind mount, so without this the lock file turns
+        # up root-owned on the host and the user cannot clear it themselves.
+        try:
+            st = os.stat(parent)
+            os.chown(lock_path, st.st_uid, st.st_gid)
+        except OSError:
+            pass
     try:
         fcntl.flock(fd, fcntl.LOCK_EX)
         yield
