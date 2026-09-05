@@ -19,11 +19,12 @@ services:
       POSTGRES_USER: w4rya
       POSTGRES_DB: w4rya
     # Postgres uses shared memory for caching; docker assigns just 64 MB by
-    # default which is too small for the Timescale extension. 2g is a sane
-    # ceiling for a CTF box — bump if you have lots of RAM and notice the
-    # cache thrashing.
-    shm_size: '2g'
-    mem_limit: 4g
+    # default which is too small for the Timescale extension. These limits are
+    # sized so the whole stack fits in ~6 GB (they used to sum to 8 GB, which
+    # oversubscribes a typical 7-8 GB CTF laptop). Bump them if you have RAM to
+    # spare and notice the cache thrashing.
+    shm_size: '1g'
+    mem_limit: 3g
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U w4rya -d w4rya || exit 1"]
       interval: 10s
@@ -38,7 +39,9 @@ services:
     image: w4rya-frontend:latest
     restart: unless-stopped
     ports:
-      - "3001:3000"
+      # Parameterised so install.sh can move the UI off a busy port. The
+      # default matches what the README and install.sh print.
+      - "${W4RYA_UI_PORT:-3001}:3000"
     expose:
       - 3000
     depends_on:
@@ -87,7 +90,7 @@ services:
       timeout: 5s
       retries: 3
       start_period: 30s
-    mem_limit: 1g
+    mem_limit: 768m
 
   flagids:
     restart: unless-stopped
@@ -105,9 +108,9 @@ services:
       FLAGID_SCRAPE: ${FLAGID_SCRAPE}
       TEAM_ID: ${TEAM_ID}
       FLAGID_ENDPOINT: ${FLAGID_ENDPOINT}
-      VISUALIZER_URL: ${VISUALIZER_URL}
+      VISUALIZER_URL: ${VISUALIZER_URL:-}
       DUMP_PCAPS: ${DUMP_PCAPS}
-    mem_limit: 512m
+    mem_limit: 256m
 
   assembler:
     build:
@@ -142,10 +145,10 @@ services:
       DUMP_PCAPS: ${DUMP_PCAPS}
       DUMP_PCAPS_INTERVAL: ${DUMP_PCAPS_INTERVAL}
       DUMP_PCAPS_FILENAME: ${DUMP_PCAPS_FILENAME}
-      BPF: ${BPF}
+      BPF: ${BPF:-}
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    mem_limit: 2g
+    mem_limit: 1536m
 
   enricher:
     build:
@@ -162,7 +165,7 @@ services:
     command: "./enricher -eve ${TRAFFIC_DIR_DOCKER}/eve.json"
     environment:
       TIMESCALE: ${TIMESCALE}
-    mem_limit: 512m
+    mem_limit: 384m
 
 volumes:
   timescale-data:

@@ -18,9 +18,10 @@ services:
       POSTGRES_HOST_AUTH_METHOD: trust
       POSTGRES_USER: w4rya
       POSTGRES_DB: w4rya
-    # This does not need to be adjusted, unless you actually want to limit it
-    # Postgres uses shared memory for caching, and docker assigns just 64 MB by default
-    shm_size: '128g'
+    # Keep in sync with docker-compose.yml — this file used to ask for a 128 GB
+    # shm tmpfs and set no memory limits at all.
+    shm_size: '1g'
+    mem_limit: 3g
 
   frontend:
     build:
@@ -29,7 +30,11 @@ services:
     image: w4rya-frontend:latest
     restart: unless-stopped
     ports:
-      - "3000:3000"
+      # Same variable as docker-compose.yml so both stacks land on the same
+      # host port. These two files share service names, image tags, the volume
+      # and the project name, so only one can run at a time — bringing one up
+      # recreates the other.
+      - "${W4RYA_UI_PORT:-3001}:3000"
     expose:
       - 3000
     depends_on:
@@ -77,6 +82,7 @@ services:
       timeout: 5s
       retries: 3
       start_period: 30s
+    mem_limit: 768m
 
   flagids:
     restart: unless-stopped
@@ -94,8 +100,9 @@ services:
       FLAGID_SCRAPE: ${FLAGID_SCRAPE}
       TEAM_ID: ${TEAM_ID}
       FLAGID_ENDPOINT: ${FLAGID_ENDPOINT}
-      VISUALIZER_URL: ${VISUALIZER_URL}
+      VISUALIZER_URL: ${VISUALIZER_URL:-}
       DUMP_PCAPS: ${DUMP_PCAPS}
+    mem_limit: 256m
 
   assembler:
     build:
@@ -130,9 +137,10 @@ services:
       DUMP_PCAPS: ${DUMP_PCAPS}
       DUMP_PCAPS_INTERVAL: ${DUMP_PCAPS_INTERVAL}
       DUMP_PCAPS_FILENAME: ${DUMP_PCAPS_FILENAME}
-      BPF: ${BPF}
+      BPF: ${BPF:-}
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    mem_limit: 1536m
 
   enricher:
     build:
@@ -150,6 +158,7 @@ services:
     command: "./enricher -eve /suricata/eve.json"
     environment:
       TIMESCALE: ${TIMESCALE}
+    mem_limit: 384m
 
   suricata:
     image: jasonish/suricata:7.0
@@ -159,6 +168,13 @@ services:
       - ${SURICATA_DIR_HOST}/log:/var/log/suricata
       - ${SURICATA_DIR_HOST}/etc:/etc/suricata
       - ${SURICATA_DIR_HOST}/lib:/var/lib/suricata
+      # The api writes rules to ./suricata-rules (services/api/rules.py), but
+      # suricata reads them from /var/lib/suricata/rules. Without this nested
+      # bind every rule created in the UI lands in a file suricata never reads,
+      # silently. Docker mounts by ascending path depth, so this wins over the
+      # ${SURICATA_DIR_HOST}/lib mount above. Do NOT replace this with a symlink
+      # — a symlink resolves inside the container's namespace and breaks.
+      - ./suricata-rules:/var/lib/suricata/rules
       # Shared with api: suricata writes the command socket here, api connects
       # to it to trigger reload-rules without docker.sock or PID sharing.
       - ./suricata-run:/var/run/suricata
