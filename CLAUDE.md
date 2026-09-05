@@ -86,6 +86,7 @@ Both files are kept deliberately in sync on three points:
 - **Admin password** is piped over stdin into `add_user.py --stdin` — never argv (world-readable via `/proc`), never an env var (visible in `docker inspect`), never a file. There is deliberately no `--admin-password` flag. `--admin-password-file` exists for CI only.
 - **Compose choice**: `--suricata` / `--no-suricata`; the chosen file is recorded as `W4RYA_COMPOSE_FILE` in `.env` and every other script (`scripts/test.sh`, `scripts/smoke.sh`, `scripts/backup.sh`) reads it from there. Switching stacks brings the old one down first.
 - Also: preflight checks, `W4RYA_UI_PORT` fallback if the port is busy, creates the suricata/auth/rules dirs (Docker would otherwise auto-create them root-owned), retries the build with `DOCKER_BUILDKIT=0` when it detects the wedged-BuildKit-DNS failure, waits on `/api/healthz`, and skips account creation if any account already exists (the `/setup` wizard covers that case).
+- **Tick clock**: `TICK_START` is stamped **once** — when it is missing or still the placeholder `.env.example` ships. A re-run keeps it, because renumbering ticks under a game in progress shifts every bucket in the graphs, and the installer's own "Next" list tells you to re-run once your real pcap directory is ready. `--reset-tick` re-baselines it to now (new game, new ticks).
 - **`--check`** is a read-only doctor mode: no prompts, no writes, tallies failures.
 
 The old root-level `start.sh` and `test.sh` were **deleted** — they referenced compose files that no longer exist. Use `install.sh` and `scripts/test.sh`.
@@ -343,7 +344,7 @@ Both diagnoses read only the slice of `install.log` written by the current build
 
 ### Smoke test (`scripts/smoke.sh`)
 
-Exercises a **running** stack over HTTP, going through the frontend's `/api` proxy rather than straight at the api container — that's the path the browser takes, and a broken proxy is a real failure mode a direct hit would miss. Credentials from `SMOKE_USER` / `SMOKE_PASS` or prompted; never argv. Read-only by default (safe to run mid-CTF); `--yellow` adds writes that restore themselves. It deliberately never calls `POST /attack/replay` — that opens real TCP connections to the configured teams.
+Exercises a **running** stack over HTTP, going through the frontend's `/api` proxy rather than straight at the api container — that's the path the browser takes, and a broken proxy is a real failure mode a direct hit would miss. Credentials from `SMOKE_USER` / `SMOKE_PASS` or prompted; never argv. With no tty and no env vars it fails fast asking for them, instead of posting empty credentials and reporting a confusing `400`. Read-only by default (safe to run mid-CTF); `--yellow` adds writes that restore themselves. It deliberately never calls `POST /attack/replay` — that opens real TCP connections to the configured teams.
 
 ## Backup (D2)
 

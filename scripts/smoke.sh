@@ -86,6 +86,16 @@ section "Auth"
 expect 401 GET /me "$(req GET /me)"
 
 SMOKE_USER="${SMOKE_USER:-}"; SMOKE_PASS="${SMOKE_PASS:-}"
+# Both prompts read from /dev/tty, which does not exist under CI or a piped
+# shell. Without this check the reads fail silently, the empty credentials are
+# posted anyway, and the run dies on a baffling "400 expected 200".
+# The probe runs in a subshell that redirects stderr *first*: `: >/dev/tty`
+# is attempted before a trailing 2>/dev/null would apply, so bash would
+# otherwise print its own "No such device" line right above ours.
+if [[ -z "$SMOKE_USER" || -z "$SMOKE_PASS" ]] && ! (exec 2>/dev/null; : >/dev/tty); then
+  echo "${C_ERR}[FAIL]${C_R} no terminal to ask for credentials on — set SMOKE_USER and SMOKE_PASS" >&2
+  exit 2
+fi
 if [[ -z "$SMOKE_USER" ]]; then read -r  -p "user: " SMOKE_USER </dev/tty; fi
 if [[ -z "$SMOKE_PASS" ]]; then read -rs -p "password: " SMOKE_PASS </dev/tty; echo; fi
 
