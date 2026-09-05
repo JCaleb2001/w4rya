@@ -1,9 +1,14 @@
-Flask_Cors
-Flask
-requests
-gunicorn
-python-dateutil
-psycopg[binary,pool]
-bcrypt
-PyYAML
-pytest
+# Pinned deliberately: an unpinned Flask/psycopg release can break the image
+# build on a machine that installs tomorrow, which defeats install.sh.
+# Versions are the ones in the working w4rya-api image; refresh with:
+#   docker run --rm w4rya-api:latest pip freeze
+# Direct dependencies only — this is not a transitive lockfile.
+Flask_Cors==6.0.5
+Flask==3.1.3
+requests==2.34.2
+gunicorn==26.2.0
+python-dateutil==2.9.0.post0
+psycopg[binary,pool]==3.3.5
+bcrypt==5.0.0
+PyYAML==6.0.3
+pytest==9.1.1

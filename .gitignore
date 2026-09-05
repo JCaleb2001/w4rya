@@ -136,6 +136,8 @@ suricata
 
 # auth: bcrypt password hashes — never commit
 /auth/users.yaml
+# runtime lock taken by user_store when writing users.yaml
+/auth/users.yaml.lock
 
 # suricata rules — local team operational state, not committed
 /suricata-rules/*.rules
@@ -146,3 +148,12 @@ suricata
 
 # scripts/backup.sh output — may contain users.yaml + .env contents
 /backups/
+# install.sh output
+/install.log
+/.env.bak.*
+
+# Real CTF captures dropped into the sample dir. gitignore does not affect the
+# upstream samples that are already tracked, so this only stops new traffic
+# from being committed by accident.
+/services/test_pcap/*.pcap
+/services/test_pcap/*.pcapng
