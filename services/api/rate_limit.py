@@ -19,6 +19,12 @@ from collections import defaultdict, deque
 LOGIN_WINDOW_SEC = 300       # 5 minutes
 LOGIN_MAX_FAILS = 5
 
+# /setup is public and creates the first admin, so it gets its own bucket:
+# keyed by IP only (there is no username to key on yet) and tighter, since a
+# legitimate installer needs one or two attempts, not five.
+SETUP_WINDOW_SEC = 600       # 10 minutes
+SETUP_MAX_FAILS = 3
+
 _lock = threading.Lock()
 _failures: dict[str, deque[float]] = defaultdict(deque)
 

@@ -144,11 +144,24 @@ def load() -> list[Rule]:
 
 
 def _atomic_write(path: str, content: str) -> None:
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), prefix=".rules.")
+    parent = os.path.dirname(path)
+    os.makedirs(parent, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=parent, prefix=".rules.")
     try:
         with os.fdopen(fd, "w") as f:
             f.write(content)
+        # mkstemp creates 0600, and the api runs as root inside the container
+        # while ./suricata-rules is a host bind mount. Without these two lines
+        # the first UI rule save turns suricata.rules into root:root 0600 on the
+        # host: unreadable to the suricata container's non-root user, uneditable
+        # from the host, and enough to abort scripts/backup.sh (it runs under
+        # `set -e` and copies *.rules). Mirrors user_store._write_atomic.
+        os.chmod(tmp, 0o644)
+        try:
+            st = os.stat(parent)
+            os.chown(tmp, st.st_uid, st.st_gid)
+        except OSError:
+            pass
         os.replace(tmp, path)
     except Exception:
         try:

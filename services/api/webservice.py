@@ -63,6 +63,7 @@ import notes
 import rate_limit
 import rules
 import suricata_ctl
+import user_store
 
 application = Flask(__name__)
 
@@ -131,6 +132,17 @@ def login():
     if not username or not password:
         return jsonify({"error": "username and password required"}), 400
 
+    # No accounts exist yet: this is a fresh install, not a failed login.
+    # Answering 401 "invalid credentials" here is what used to strand people
+    # on a login form that could never succeed. Deliberately does NOT record
+    # a rate-limit failure — otherwise the installer locks out the very
+    # username they are about to create.
+    if auth.user_count() == 0:
+        return jsonify({
+            "error": "no accounts exist yet",
+            "needs_setup": True,
+        }), 409
+
     # D1: brute-force protection. Per-worker in-memory bucket; with 3 gunicorn
     # workers an attacker still only gets ~15 attempts in 5 min. Acceptable
     # for team-internal threat model. (Public deployment should move this to
@@ -175,6 +187,140 @@ def me():
     })
 
 
+# --- first-run setup -------------------------------------------------------
+# A fresh clone has no auth/users.yaml (it is gitignored), so there is nobody
+# to log in as. These two routes are public by necessity; POST /setup closes
+# itself permanently as soon as one account exists.
+
+@application.route("/setup/status")
+def setup_status():
+    """Public. Whether this install still needs its first account."""
+    return jsonify({"needs_setup": auth.user_count() == 0})
+
+
+@application.route("/setup", methods=["POST"])
+def setup_first_user():
+    """Public, self-closing. Creates the first account and signs it in.
+
+    The first user is always created as `admin`: `viewer` (the default for
+    every later account) could not reach /config or /audit, which would leave
+    the install unusable, and omitting the role entirely would rely on the
+    legacy "no role means admin" fallback in auth.py. Be explicit instead.
+    """
+    remote_ip = request.remote_addr or "?"
+    rl_key = f"setup::{remote_ip}"
+    if rate_limit.is_blocked(
+        rl_key,
+        window=rate_limit.SETUP_WINDOW_SEC,
+        max_fails=rate_limit.SETUP_MAX_FAILS,
+    ):
+        retry = rate_limit.seconds_until_unblock(
+            rl_key,
+            window=rate_limit.SETUP_WINDOW_SEC,
+            max_fails=rate_limit.SETUP_MAX_FAILS,
+        )
+        return jsonify({
+            "error": "too many attempts; try again later",
+            "retry_after_sec": retry,
+        }), 429
+
+    data = request.get_json(silent=True) or {}
+    username = (data.get("username") or "").strip()
+    password = data.get("password") or ""
+
+    try:
+        # only_if_empty re-checks under the file lock, so two workers racing
+        # on a fresh install cannot both create a first admin.
+        created = user_store.create_user(
+            username, password, "admin", only_if_empty=True
+        )
+    except user_store.UserStoreError as e:
+        # Only a "setup already completed" answer counts against the bucket.
+        # A rejected password is an honest typo, not abuse.
+        if e.code == 409:
+            rate_limit.record_failure(rl_key, window=rate_limit.SETUP_WINDOW_SEC)
+            audit.log(username or "?", "setup.rejected",
+                      details={"ip": remote_ip, "reason": e.message})
+        return jsonify({"error": e.message}), e.code
+
+    auth.invalidate_users_cache()
+    rate_limit.clear(rl_key)
+    session.clear()
+    session["user"] = created["username"]
+    session.permanent = True
+    audit.log(created["username"], "setup.create_first_user",
+              target=created["username"],
+              details={"ip": remote_ip, "role": created["role"]})
+    return jsonify({"user": created["username"], "role": created["role"]}), 201
+
+
+# --- user administration (admin only) --------------------------------------
+
+@application.route("/users", methods=["GET"])
+@auth.requires_role("admin")
+def users_list():
+    return jsonify(user_store.list_users())
+
+
+@application.route("/users", methods=["POST"])
+@auth.requires_role("admin")
+def users_create():
+    data = request.get_json(silent=True) or {}
+    username = (data.get("username") or "").strip()
+    password = data.get("password") or ""
+    role = (data.get("role") or user_store.VALID_ROLES[0]).strip()
+    try:
+        created = user_store.create_user(username, password, role)
+    except user_store.UserStoreError as e:
+        return jsonify({"error": e.message}), e.code
+    auth.invalidate_users_cache()
+    audit.log(auth.current_user(), "users.create", target=created["username"],
+              details={"role": created["role"]})
+    return jsonify(created), 201
+
+
+@application.route("/users/<username>", methods=["DELETE"])
+@auth.requires_role("admin")
+def users_delete(username):
+    if username == auth.current_user():
+        return jsonify({"error": "refusing to delete the account you are signed in as"}), 409
+    try:
+        user_store.delete_user(username)
+    except user_store.UserStoreError as e:
+        return jsonify({"error": e.message}), e.code
+    auth.invalidate_users_cache()
+    audit.log(auth.current_user(), "users.delete", target=username)
+    return jsonify({"ok": True})
+
+
+@application.route("/users/<username>/role", methods=["PUT"])
+@auth.requires_role("admin")
+def users_set_role(username):
+    data = request.get_json(silent=True) or {}
+    try:
+        updated = user_store.set_role(username, (data.get("role") or "").strip())
+    except user_store.UserStoreError as e:
+        return jsonify({"error": e.message}), e.code
+    auth.invalidate_users_cache()
+    audit.log(auth.current_user(), "users.set_role", target=username,
+              details={"role": updated["role"]})
+    return jsonify(updated)
+
+
+@application.route("/users/<username>/password", methods=["PUT"])
+@auth.requires_role("admin")
+def users_set_password(username):
+    data = request.get_json(silent=True) or {}
+    try:
+        user_store.set_password(username, data.get("password") or "")
+    except user_store.UserStoreError as e:
+        return jsonify({"error": e.message}), e.code
+    auth.invalidate_users_cache()
+    # Never log the password itself, only that it was rotated.
+    audit.log(auth.current_user(), "users.set_password", target=username)
+    return jsonify({"ok": True})
+
+
 @application.route("/tick_info")
 def getTickInfo():
     data = {
@@ -187,7 +333,11 @@ def getTickInfo():
 
 @application.route("/query", methods=["POST"])
 def query():
-    query = request.get_json()
+    # silent=True so a request without a JSON content-type is a 400 rather than
+    # a 415 with an HTML body (fetchBaseQuery cannot parse HTML).
+    query = request.get_json(silent=True)
+    if not isinstance(query, dict):
+        return jsonify({"error": "a JSON object body is required"}), 400
 
     # Translate service_names -> list of (ip_network, port) pairs by looking
     # them up in the runtime services config. Frontend sends names so it
@@ -310,8 +460,14 @@ def getTags():
 @application.route("/star", methods=["POST"])
 @auth.requires_role("operator")
 def setStar():
-    query = request.get_json()
-    flow_id = uuid.UUID(query.get("id"))
+    # get_json() without silent=True raises 415 on a missing content-type, and
+    # uuid.UUID(None) raises TypeError — both surfaced as a 500 with an HTML
+    # body the frontend cannot parse. Validate instead.
+    query = request.get_json(silent=True) or {}
+    try:
+        flow_id = uuid.UUID(str(query.get("id") or ""))
+    except (ValueError, TypeError):
+        return jsonify({"error": "a valid flow id is required"}), 400
     apply = bool(query.get("star"))
     with db.connection() as c:
         c.flow_tag(flow_id, "starred", apply)

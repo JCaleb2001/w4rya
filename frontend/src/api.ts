@@ -50,7 +50,7 @@ const baseQueryWithReauth: BaseQueryFn<
 
 export const w4ryaApi = createApi({
   baseQuery: baseQueryWithReauth,
-  tagTypes: ["Me", "Config", "Services", "Teams", "TickInfo", "FlagRegex", "Rules", "Notes"],
+  tagTypes: ["Me", "Setup", "Users", "Config", "Services", "Teams", "TickInfo", "FlagRegex", "Rules", "Notes"],
   endpoints: (builder) => ({
     getServices: builder.query<Service[], void>({
       query: () => "/services",
@@ -231,6 +231,52 @@ export const w4ryaApi = createApi({
     logout: builder.mutation<{ ok: boolean }, void>({
       query: () => ({ url: "/logout", method: "POST" }),
       invalidatesTags: ["Me"],
+    }),
+
+    // --- first-run setup ---
+    // Public endpoints: on a fresh install there is no session to make yet.
+    getSetupStatus: builder.query<SetupStatus, void>({
+      query: () => "/setup/status",
+      providesTags: ["Setup"],
+    }),
+    completeSetup: builder.mutation<
+      { user: string; role: Role },
+      { username: string; password: string }
+    >({
+      query: (body) => ({ url: "/setup", method: "POST", body }),
+      invalidatesTags: ["Me", "Setup", "Users"],
+    }),
+
+    // --- user administration (admin only) ---
+    getUsers: builder.query<UserAccount[], void>({
+      query: () => "/users",
+      providesTags: ["Users"],
+    }),
+    createUser: builder.mutation<
+      UserAccount,
+      { username: string; password: string; role: Role }
+    >({
+      query: (body) => ({ url: "/users", method: "POST", body }),
+      invalidatesTags: ["Users"],
+    }),
+    deleteUser: builder.mutation<{ ok: boolean }, string>({
+      query: (username) => ({ url: `/users/${encodeURIComponent(username)}`, method: "DELETE" }),
+      invalidatesTags: ["Users"],
+    }),
+    setUserRole: builder.mutation<UserAccount, { username: string; role: Role }>({
+      query: ({ username, role }) => ({
+        url: `/users/${encodeURIComponent(username)}/role`,
+        method: "PUT",
+        body: { role },
+      }),
+      invalidatesTags: ["Users", "Me"],
+    }),
+    setUserPassword: builder.mutation<{ ok: boolean }, { username: string; password: string }>({
+      query: ({ username, password }) => ({
+        url: `/users/${encodeURIComponent(username)}/password`,
+        method: "PUT",
+        body: { password },
+      }),
     }),
 
     // --- runtime config ---
@@ -507,6 +553,16 @@ export interface Note {
 
 export type Role = "viewer" | "operator" | "admin";
 
+export interface SetupStatus {
+  /** True only while zero accounts exist — see POST /setup, which self-closes. */
+  needs_setup: boolean;
+}
+
+export interface UserAccount {
+  username: string;
+  role: Role;
+}
+
 const ROLE_RANK: Record<Role, number> = { viewer: 0, operator: 1, admin: 2 };
 
 export function hasRole(actual: Role | undefined, min: Role): boolean {
@@ -586,6 +642,13 @@ export const {
   useGetMeQuery,
   useLoginMutation,
   useLogoutMutation,
+  useGetSetupStatusQuery,
+  useCompleteSetupMutation,
+  useGetUsersQuery,
+  useCreateUserMutation,
+  useDeleteUserMutation,
+  useSetUserRoleMutation,
+  useSetUserPasswordMutation,
   useGetConfigQuery,
   useUpdateConfigMutation,
   useGetConfigServicesQuery,

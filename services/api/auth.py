@@ -14,12 +14,17 @@ import bcrypt
 import yaml
 from flask import jsonify, request, session
 
-USERS_FILE = os.environ.get("W4RYA_USERS_FILE", "/app/auth/users.yaml")
+# The path lives in user_store, which owns every write to this file.
+from user_store import USERS_FILE
 
 # Paths that bypass the auth guard. Everything else requires a session.
 # `/me` is intentionally NOT public — the frontend uses its 401 response as
 # the "not logged in" signal.
-PUBLIC_PATHS = {"/", "/healthz", "/login", "/logout"}
+#
+# `/setup/status` and `/setup` must be public: on a fresh install there is no
+# account to authenticate with yet. `/setup` is self-closing — it refuses once
+# any account exists (see user_store.create_user(only_if_empty=True)).
+PUBLIC_PATHS = {"/", "/healthz", "/login", "/logout", "/setup", "/setup/status"}
 
 # Role rank: higher number = more permissions. Decorator compares
 # ROLE_RANK[user_role] >= ROLE_RANK[required_role].
@@ -53,6 +58,24 @@ def _load_users() -> dict:
     return users
 
 
+def invalidate_users_cache() -> None:
+    """Drop this worker's cached users.
+
+    The mtime check already catches writes from other workers, but a write
+    performed by *this* worker should take effect immediately rather than
+    depending on filesystem timestamp granularity.
+    """
+    global _users_cache, _users_mtime
+    _users_cache = None
+    _users_mtime = None
+
+
+def user_count() -> int:
+    """How many accounts exist (cached read — fine for the /setup/status
+    hint). Mutations use user_store.count() instead, which reads under lock."""
+    return len(_load_users())
+
+
 def verify_password(username: str, password: str) -> bool:
     users = _load_users()
     record = users.get(username)
@@ -72,11 +95,20 @@ def current_user() -> Optional[str]:
 
 
 def current_role() -> str:
-    """Role of the currently authed user. 'viewer' if unauthed."""
+    """Role of the currently authed user. 'viewer' if unauthed or unknown."""
     user = current_user()
     if not user:
         return "viewer"
-    record = _load_users().get(user) or {}
+    record = _load_users().get(user)
+    if record is None:
+        # The session names an account that no longer exists — a teammate who
+        # was deleted while holding a valid cookie. This is NOT the legacy
+        # roleless case: `.get(user) or {}` used to collapse the two, so a
+        # deleted user fell through to LEGACY_ROLE and came back as *admin*.
+        # Fail closed; require_auth below rejects them outright anyway.
+        return "viewer"
+    if not isinstance(record, dict):
+        return "viewer"
     role = (record.get("role") or LEGACY_ROLE).strip()
     if role not in ROLE_RANK:
         role = "viewer"
@@ -93,7 +125,15 @@ def require_auth():
         return None
     if request.path in PUBLIC_PATHS:
         return None
-    if current_user() is None:
+    user = current_user()
+    if user is None:
+        return jsonify({"error": "unauthorized"}), 401
+    # Sessions are stateless signed cookies, so deleting an account does not
+    # invalidate the cookies already issued for it. Check the account still
+    # exists on every request: without this, a removed teammate keeps full
+    # access until their 7-day cookie expires.
+    if _load_users().get(user) is None:
+        session.clear()
         return jsonify({"error": "unauthorized"}), 401
     return None
 
