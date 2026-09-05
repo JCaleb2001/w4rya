@@ -30,7 +30,10 @@ case "$CMD" in
     # readable as soon as tcpdump moves on to the next one.
     # -G + -C together: a new file every ROTATE_SECONDS, or sooner if the
     # current one hits ROTATE_MB — whichever comes first.
-    nohup tcpdump -i "$IFACE" -s 0 -U \
+    # -Z root: Debian/Ubuntu tcpdump drops privileges to the 'tcpdump' user
+    # by default once the capture socket is open, and that user can't even
+    # traverse a 700 /root to reach $DIR — stay root so the dump file opens.
+    nohup tcpdump -i "$IFACE" -s 0 -U -Z root \
       -w "$DIR/%Y-%m-%d_%H-%M-%S.pcap" \
       -G "$ROTATE_SECONDS" -C "$ROTATE_MB" \
       >"$DIR/tcpdump.log" 2>&1 &
