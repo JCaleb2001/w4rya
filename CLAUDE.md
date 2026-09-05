@@ -55,7 +55,40 @@ Frontend (React) ──(RTK Query)──> Flask API ──(SQL)──> Timescale
 
 - `docker-compose.yml` — main stack (timescale, frontend, api, flagids, assembler, enricher). What you run for normal use.
 - `docker-compose-suricata.yml` — same as above + suricata container.
-- `docker-compose-test.yml` — **stale**, still wired to MongoDB. Don't trust it.
+- `docker-compose-test.yml` — **deleted**. Tests run against the api container; see "Tests" below.
+
+Only one of the two compose files can run at a time: they share service names, image
+tags, the `timescale-data` volume and the default project name, so bringing one up
+recreates the other. `install.sh` records the choice as `W4RYA_COMPOSE_FILE` in `.env`
+and every other script reads it from there.
+
+Both files are kept deliberately in sync on three points:
+
+- **UI port** is `${W4RYA_UI_PORT:-3001}:3000` in both. The suricata variant used to
+  hardcode `3000:3000`, so switching stacks moved the UI to a different port.
+- **`${BPF:-}` and `${VISUALIZER_URL:-}`** carry explicit empty defaults — without them
+  every `docker compose` invocation printed `variable is not set` warnings.
+- **`mem_limit`s** now sum to ~6 GB (was 8 GB, which oversubscribes a 7–8 GB CTF
+  laptop): timescale 3g, api 768m, assembler 1536m, enricher 384m, flagids 256m.
+  `docker-compose-suricata.yml` also dropped `shm_size: 128g` → `1g` and gained the
+  same limits.
+
+`docker-compose-suricata.yml` additionally binds `./suricata-rules:/var/lib/suricata/rules`
+— see "Suricata rules" and "Do not touch without discussion" below. It is load-bearing.
+
+## Install (`install.sh`)
+
+`./install.sh` is **the supported way to install**. Idempotent — safe to re-run on an existing install.
+
+- **Four prompts**: pcap directory, flag regex, tick length (seconds), admin username + password. Everything else is derived or defaulted.
+- **`.env` handling**: it *upserts* keys rather than overwriting the file, so values you set by hand survive. `env_set` rewrites the first matching line (including a commented-out one — this is how `BPF` and `VISUALIZER_URL` stop emitting "variable is not set"), drops later duplicates (compose is last-wins, so a stale duplicate below would silently override), and appends if absent. Backs `.env` up to `.env.bak.<UTC>` before the first write, and `chmod 600`s it.
+- **Session secret**: generates `W4RYA_SECRET_KEY` when missing and **keeps an existing one** unless `--rotate-secret` (rotating signs everyone out).
+- **Admin password** is piped over stdin into `add_user.py --stdin` — never argv (world-readable via `/proc`), never an env var (visible in `docker inspect`), never a file. There is deliberately no `--admin-password` flag. `--admin-password-file` exists for CI only.
+- **Compose choice**: `--suricata` / `--no-suricata`; the chosen file is recorded as `W4RYA_COMPOSE_FILE` in `.env` and every other script (`scripts/test.sh`, `scripts/smoke.sh`, `scripts/backup.sh`) reads it from there. Switching stacks brings the old one down first.
+- Also: preflight checks, `W4RYA_UI_PORT` fallback if the port is busy, creates the suricata/auth/rules dirs (Docker would otherwise auto-create them root-owned), retries the build with `DOCKER_BUILDKIT=0` when it detects the wedged-BuildKit-DNS failure, waits on `/api/healthz`, and skips account creation if any account already exists (the `/setup` wizard covers that case).
+- **`--check`** is a read-only doctor mode: no prompts, no writes, tallies failures.
+
+The old root-level `start.sh` and `test.sh` were **deleted** — they referenced compose files that no longer exist. Use `install.sh` and `scripts/test.sh`.
 
 ## Key frontend files
 
@@ -63,7 +96,7 @@ Frontend (React) ──(RTK Query)──> Flask API ──(SQL)──> Timescale
 - `frontend/src/store/index.ts` — Redux store config (`w4ryaApi.reducer`, `filter`, `toasts`).
 - `frontend/src/store/filter.ts` — `W4ryaFilterState` (tag include/exclude, flag/flagid filters, AND/OR intersection mode).
 - `frontend/src/store/toasts.ts` — global toast slice (`pushToast`, `dismissToast`).
-- `frontend/src/components/Header.tsx` — top bar: brand, search, date pickers, hotkeys, page nav (Config / Rules / Graph), user menu (Phase A4+ added Config/Rules buttons).
+- `frontend/src/components/Header.tsx` — top bar: brand, search, date pickers, hotkeys, page nav (Config / Rules / Graph), user menu (Phase A4+ added Config/Rules buttons). Audit + Users links are gated on `hasRole(role, "admin")`.
 - `frontend/src/components/FlowList.tsx` — sidebar virtualized flow list, filter panel (services multi-select + tag intersection chips), keyboard nav.
 - `frontend/src/components/Corrie.tsx` — time-series correlation viz (ApexCharts).
 - `frontend/src/components/ExploitModal.tsx` — Test-Exploit modal (replays a flow against configured teams, downloads farm script).
@@ -71,7 +104,10 @@ Frontend (React) ──(RTK Query)──> Flask API ──(SQL)──> Timescale
 - `frontend/src/components/FlagLeakWatcher.tsx` — polls `tags_include=['flag-out']` every 15s; new ones dispatch danger toasts. Mounted in Layout.
 - `frontend/src/components/NotesPanel.tsx` — per-flow notes UI (rendered below Meta in FlowView).
 - `frontend/src/pages/Home.tsx` — welcome screen + shortcut reference.
-- `frontend/src/pages/Login.tsx` — auth gate; rendered when RequireAuth sees 401.
+- `frontend/src/pages/Login.tsx` — auth gate; rendered when RequireAuth sees 401 *and* accounts exist.
+- `frontend/src/pages/Setup.tsx` — /setup route, first-run wizard. Self-closing: bounces to `/login` once `GET /setup/status` reports `needs_setup:false`.
+- `frontend/src/pages/Users.tsx` — /users route, admin-only account management (list, create, delete, change role, reset password).
+- `frontend/src/App.tsx` — routes + `RequireAuth`. On no session it queries `GET /setup/status` and redirects to `/setup` (not `/login`) when `needs_setup` — a fresh install has no account, so a login form there could never succeed.
 - `frontend/src/pages/Config.tsx` — /config route, three tabs: Game / Services / Teams.
 - `frontend/src/pages/Rules.tsx` — /rules route, Suricata rules CRUD + templates + SuricataControlBar (reload + autoreload toggle).
 - `frontend/src/pages/Attacks.tsx` — /attacks route, chronological attack timeline (Suricata alerts + flag-out events).
@@ -105,12 +141,11 @@ These are load-bearing; changing them without coordination breaks things downstr
    - `services/timescale/Dockerfile` (`COPY w4rya /w4rya`)
    
    If you rename it again, update all six places.
-5. **`# tulip:` comment markers** in `services/go-importer/converters/` — these document changes the original Tulip team made relative to upstream [flower](https://github.com/secgroup/flower). Keep them as historical record; do not rewrite to `w4rya`.
+5. **The nested rules bind in `docker-compose-suricata.yml`** — `./suricata-rules:/var/lib/suricata/rules`, mounted *inside* `${SURICATA_DIR_HOST}/lib`. It is the only thing connecting the rules the api writes to the rules suricata reads; without it the UI silently edits a file nobody loads. Do not flatten it, reorder it, or replace it with a symlink.
+6. **`# tulip:` comment markers** in `services/go-importer/converters/` — these document changes the original Tulip team made relative to upstream [flower](https://github.com/secgroup/flower). Keep them as historical record; do not rewrite to `w4rya`.
 
 ## Known vestigial / stale code (not worth fixing reactively)
 
-- `dev.sh` runs `docker-compose up -d mongo`, but the main compose has no mongo service — it's broken.
-- `docker-compose-test.yml` still wires MongoDB and an orphan `flagidendpoint` test image.
 - `services/README.md` describes the legacy MongoDB architecture.
 - `services/flagids/flagids.py:30` prints `"CONNECTION TO MONGO ESTABLISHED"` but the file only imports `psycopg` — dead string.
 
@@ -118,22 +153,44 @@ Leave these alone unless we're doing an explicit cleanup pass; they don't affect
 
 ## Auth + roles (`auth.py`)
 
-Basic auth is enabled. The api requires a Flask session cookie for every endpoint except `/`, `/login`, `/logout`.
+Basic auth is enabled. The api requires a Flask session cookie for every endpoint except the ones in `auth.PUBLIC_PATHS`, now `{"/", "/healthz", "/login", "/logout", "/setup", "/setup/status"}`. `/me` is deliberately NOT public — the frontend uses its 401 as the "not logged in" signal.
 
 **Roles** (B5): `viewer < operator < admin`. Stored per user in `auth/users.yaml` as `role:` field. Entries without `role` default to `admin` (back-compat for the bootstrap user); new users default to `viewer`. `@auth.requires_role("operator")` / `@auth.requires_role("admin")` decorators gate write endpoints — see "Permission matrix" below.
 
-- **Storage**: `auth/users.yaml` (gitignored). Schema: `users: { <name>: { password_hash: <bcrypt> } }`. Read by `services/api/auth.py` with mtime-based caching, so editing the file doesn't strictly require a restart, though `docker compose restart api` is safer.
+- **Storage**: `auth/users.yaml` (gitignored). Schema: `users: { <name>: { password_hash: <bcrypt>, role: <role> } }`. Read by `services/api/auth.py` with mtime-based caching, so editing the file doesn't strictly require a restart, though `docker compose restart api` is safer. Every *write* goes through `user_store.py` (below).
 - **Cookie**: name `w4rya_session`, httpOnly, SameSite=Lax, Secure=False (flip to True when running behind HTTPS), 7-day lifetime. Signed with `W4RYA_SECRET_KEY` from `.env`.
-- **Mount**: `./auth:/app/auth` (rw — the bootstrap CLI writes to it; the api code only reads).
+- **Mount**: `./auth:/app/auth` (rw — the api writes here now, via `/setup` and `/users`, as well as the CLI).
 - **Frontend**: `frontend/src/api.ts` wraps `fetchBaseQuery` with `credentials:'include'`, a `Me` tag type, and a 401 catcher that invalidates `Me` (so mid-session expiry triggers RequireAuth → redirect to `/login`). `RequireAuth` in `App.tsx` is the gate.
 
-### Bootstrap a user
+### The user store (`services/api/user_store.py`)
+
+The **single writer** for `auth/users.yaml`. `auth.py` keeps the cached read path (hot on every request); `user_store` owns every mutation, and is imported by both the HTTP endpoints and the `auth/add_user.py` CLI so validation and hashing can't drift apart.
+
+- `USERS_FILE` now lives here (`W4RYA_USERS_FILE`, default `/app/auth/users.yaml`); `auth.py` does `from user_store import USERS_FILE`.
+- Every mutation takes an exclusive `fcntl.flock` on a sidecar `auth/users.yaml.lock` and **re-reads the file inside the lock**. That is what makes `create_user(only_if_empty=True)` safe: the 3 gunicorn workers each have their own users cache, so without it two first-run `POST /setup` requests could both create a "first admin".
+- Writes are atomic (tmp file + `os.replace`) and `chown` the result to the containing directory's owner, so the root-running api container doesn't leave root-owned files on the host bind mount.
+- Refuses to delete or demote the **last admin** (`_would_orphan_admins`) — that would lock everyone out of `/config` and `/audit` permanently.
+- Validation: username `[A-Za-z0-9_-]{1,32}`, password ≥ 8 chars, role in `viewer|operator|admin`, bcrypt cost 12. Errors are `UserStoreError(message, code)` where `code` is the HTTP status the route answers with.
+
+### First-run setup (`/setup`)
+
+A fresh clone has no `auth/users.yaml` (gitignored), so there is nobody to log in as.
+
+- `GET /setup/status` — public. `{needs_setup: <bool>}`.
+- `POST /setup {username, password}` — public and **self-closing**: creates the first account as an explicit `admin` (never `viewer`, which couldn't reach `/config` or `/audit`), opens the session, returns 201. Answers 409 once any account exists. Its own rate-limit bucket (`rate_limit.SETUP_WINDOW_SEC` / `SETUP_MAX_FAILS`, keyed by IP only — there is no username yet); only the "already completed" 409 counts against it, a rejected password does not.
+- `POST /login` answers **409 `{needs_setup: true}`** instead of a misleading 401 when zero accounts exist, and deliberately does *not* consume a rate-limit attempt in that case — otherwise the installer locks out the username they're about to create.
+
+### Managing accounts (`/users`, admin only)
+
+`GET /users`, `POST /users {username, password, role}`, `DELETE /users/<u>`, `PUT /users/<u>/role {role}`, `PUT /users/<u>/password {password}`. All audited (`users.create` / `users.delete` / `users.set_role` / `users.set_password` — never the password itself). `DELETE` refuses the account you are signed in as. Each write calls `auth.invalidate_users_cache()` so this worker sees it immediately. UI: `/users`.
+
+### CLI escape hatch
 
 ```
 docker compose run --rm api python /app/auth/add_user.py <username> [--role admin|operator|viewer]
 ```
 
-Prompts for password (getpass, no echo). Writes `{password_hash, role}` to `auth/users.yaml` (default role: viewer). Then `docker compose restart api` (or just wait for the mtime cache to expire on next request).
+Prompts for password (getpass, no echo), or reads one line from stdin with `--stdin` (this is how `install.sh` passes the password without it ever becoming argv or an env var). It delegates to `user_store`, so it gets the same locking, validation and ownership handling. Use it for bootstrapping without a browser, rotating a password, or unwedging a locked-out install; the UI covers the normal cases.
 
 ### Permission matrix
 
@@ -146,6 +203,11 @@ Prompts for password (getpass, no echo). Writes `{password_hash, role}` to `auth
 | POST /attack/replay | ✗ | ✓ | ✓ |
 | PUT /config, /config/services, /config/teams | ✗ | ✗ | ✓ |
 | GET /audit | ✗ | ✗ | ✓ |
+| GET /users | ✗ | ✗ | ✓ |
+| POST /users, DELETE /users/<u> | ✗ | ✗ | ✓ |
+| PUT /users/<u>/role, /users/<u>/password | ✗ | ✗ | ✓ |
+
+`GET /setup/status` and `POST /setup` sit outside the matrix — both are public (no session required), and `/setup` 409s once any account exists.
 
 403 responses include `{required_role, your_role}` so the UI can explain.
 
@@ -153,7 +215,7 @@ Do NOT use `sudo` for the above — your user is in the `docker` group, and `sud
 
 ### Rotating a password
 
-Re-run `add_user.py <same-username>` — it overwrites the hash for that user. To remove a user, edit `auth/users.yaml` by hand and delete the entry.
+From the UI: `/users` → Reset password. From the CLI: re-run `add_user.py <same-username>`, which overwrites the hash and role for that user. Removing a user is `/users` → Delete (or `user_store.delete_user`); hand-editing `auth/users.yaml` still works but bypasses the last-admin guard.
 
 ### Rotating the session secret
 
@@ -190,7 +252,9 @@ Endpoints: `GET /rules` (list + templates + suricata socket status), `POST /rule
 
 Socket lives on `./suricata-run/` (host) bind-mounted into both api and suricata containers, so the api can `AF_UNIX` connect to it without docker.sock or PID sharing.
 
-When running the suricata variant, the same `./suricata-rules/` dir is what api edits, but the suricata container expects rules under `${SURICATA_DIR_HOST}/lib/rules/`. Either align via a symlink or remount; this is left to the team's deploy.
+`_atomic_write` chmods the temp file 0644 and chowns it to the containing directory's owner before `os.replace` (same host-ownership reason as `user_store._write_atomic`): the api runs as root inside the container while `./suricata-rules` is a host bind mount, so without it the first UI rule save leaves `suricata.rules` root:root 0600 — unreadable to the suricata container's non-root user, uneditable from the host, and enough to abort `scripts/backup.sh`.
+
+**The rules path used to be silently broken.** The api writes to `./suricata-rules` while the suricata container reads `/var/lib/suricata/rules`, which was covered by the `${SURICATA_DIR_HOST}/lib` mount — so every rule created in the UI went to a file suricata never read, with no error anywhere. `docker-compose-suricata.yml` now adds a nested bind `./suricata-rules:/var/lib/suricata/rules`; Docker mounts by ascending path depth, so it wins over the `lib` mount above it. Do **not** "simplify" this into a symlink — a symlink resolves inside the container's namespace and breaks the mapping again.
 
 ## Notes per flow (`/flow/<id>/notes`)
 
@@ -234,21 +298,48 @@ Fullscreen route OUTSIDE the main Layout (no header/sidebar). 2×2 panels: servi
 
 Backend remains the security boundary (403 with `{required_role, your_role}`); the UI hints are purely UX so users don't click into errors.
 
-## Tests (D4)
+## Tests
 
-`services/api/tests/test_pure.py` — 29 unit tests covering the pure-function paths the v0.3.0 audit flagged as silent-failure risks (`rate_limit`, `app_config.coerce_scalar` regex validation, `rules.parse_one` + `_inject_sid`, `rules` round-trip on a tmp file, `attack` script gen / payload build). Skips DB and Flask startup — runs in ~0.3s.
+~250 tests in `services/api/tests/`, all offline, a few seconds (`./scripts/test.sh -q` prints the current count):
+
+| File | covers |
+|---|---|
+| `test_pure.py` | pure-function paths (`rate_limit`, `app_config.coerce_scalar`, `rules.parse_one` + `_inject_sid`, rules round-trip, `attack` script gen / payload build) |
+| `test_app_boot.py` | import-time wiring, public paths, route registration |
+| `test_auth_unit.py` | `auth.py` internals — bcrypt verify, role ranking, the mtime cache |
+| `test_routes_roles.py` | the permission matrix, endpoint by endpoint |
+| `test_routes_auth.py` | login / logout / rate limiting / `needs_setup` 409 |
+| `test_routes_setup.py` | `/setup` + `/setup/status`, including the self-closing 409 |
+| `test_routes_users.py` | `/users` CRUD |
+| `test_routes_config.py` | `/config` read/write paths, including flag-regex write-time validation |
+| `test_user_store.py` | locking, atomic write, last-admin guard, validation |
+
+**Why they need no DB or network** (`tests/conftest.py` explains this at the top, and it's the fact worth remembering): `webservice.py` builds `db = database.Pool(os.environ["TIMESCALE"])` at *import* time, but `Pool` passes `open=False` to psycopg_pool, so it neither connects nor validates the conninfo. Setting `W4RYA_SECRET_KEY` and `TIMESCALE` to a syntactically-valid-but-dead URL before import is therefore enough to run the whole route suite offline.
+
+The rule that follows: tests use **`webservice.application` directly and must never call `create_app()`** — that is what opens the pool and runs the three `init_schema()` calls.
+
+**Trap**: `auth.py` does `from user_store import USERS_FILE`, which binds by value at import time. A test that redirects the user store must patch **both** modules (`user_store.USERS_FILE` *and* `auth.USERS_FILE`) or auth will keep reading the real `users.yaml`. The `users_file` autouse fixture does this, plus drops bcrypt to 4 rounds and invalidates the auth cache.
 
 Run:
 
 ```
-docker compose exec api python -m pytest /app/tests/ -v
+./scripts/test.sh            # all
+./scripts/test.sh -k setup   # pytest args pass straight through
 ```
 
-The api Dockerfile installs `pytest` via `requirements.txt`. If you ever rebuild and hit `Temporary failure in name resolution` from pip, BuildKit's network is wedged on this host — workaround:
+`scripts/test.sh` mounts `services/api` **read-only over the built image**, so editing a test needs no rebuild. If `w4rya-api:latest` doesn't exist yet it falls back to `docker compose exec api pytest` on the running container.
+
+If you rebuild and hit `Temporary failure in name resolution` from pip, BuildKit's network is wedged on this host — workaround (`install.sh` retries this automatically):
 
 ```
 docker build --network=host -t w4rya-api:latest -f services/api/Dockerfile-api services/api/
 ```
+
+`services/api/requirements.txt` is **pinned with `==`** (direct deps only, not a transitive lockfile) so a new upstream Flask/psycopg release can't break the build on a machine that installs tomorrow. Refresh with `docker run --rm w4rya-api:latest pip freeze`.
+
+### Smoke test (`scripts/smoke.sh`)
+
+Exercises a **running** stack over HTTP, going through the frontend's `/api` proxy rather than straight at the api container — that's the path the browser takes, and a broken proxy is a real failure mode a direct hit would miss. Credentials from `SMOKE_USER` / `SMOKE_PASS` or prompted; never argv. Read-only by default (safe to run mid-CTF); `--yellow` adds writes that restore themselves. It deliberately never calls `POST /attack/replay` — that opens real TCP connections to the configured teams.
 
 ## Backup (D2)
 
@@ -256,7 +347,9 @@ docker build --network=host -t w4rya-api:latest -f services/api/Dockerfile-api s
 
 ## Roadmap (next-up)
 
-Phase A (operational features), Phase B (auto-reload / per-service stats / attack timeline / roles+audit), Phase C (UI role-gating polish / war-room mode / audit filter+export), and Phase D (hardening + ops sanity + frontend polish + smoke tests) are done. Open ideas — these all need info from the user before starting:
+Phase A (operational features), Phase B (auto-reload / per-service stats / attack timeline / roles+audit), Phase C (UI role-gating polish / war-room mode / audit filter+export), and Phase D (hardening + ops sanity + frontend polish + smoke tests) are done. On top of those sits the account / install / test layer documented above: `user_store.py` as the single writer, the `/setup` first-run wizard and `/users` admin page, `install.sh`, and the offline route test suite (`scripts/test.sh`) plus `scripts/smoke.sh`.
+
+Open ideas — these all need info from the user before starting:
 
 - **Loss attribution / scoreboard scraper** — link a "lost flag at tick N" scoreboard event to the flow that caused it. Needs the CTF platform format (Faust, EnoEngine, iCTF, custom?) and scoreboard URL/auth.
 - **Replay with tokenized flagids** — current exploit replay sends captured bytes as-is, which works for stateless exploits but not for ones where the flagid was per-team. Needs FLAGID_ENDPOINT plumbing extended to swap per-team flagid before each replay target.

@@ -8,7 +8,12 @@ It captures pcap traffic, ingests it into TimescaleDB, surfaces flows in a React
 
 ## What differs from upstream Tulip
 
-This fork currently differs from upstream only in branding. Functional changes will land as the roadmap below progresses.
+- **One-command install** — `./install.sh` handles the whole setup, including creating your first admin account.
+- **Accounts and roles** — session auth with `viewer` / `operator` / `admin` tiers, a first-run wizard, and an admin Users page so each teammate signs in as themselves.
+- **Suricata rules from the UI** — create, edit, enable/disable and delete rules at `/rules`, with a quick "block this IP" button on any flow.
+- **Runtime config** — services, teams, flag format and tick length are edited at `/config` during the game; no rebuild.
+- **Exploit testing** — replay a captured flow against every configured team from the UI, and download a standalone farm script.
+- **Attack timeline, per-service stats, flag-leak alarm, per-flow notes, audit log, and a fullscreen war-room view.**
 
 ## No-AI policy
 
@@ -18,33 +23,69 @@ Pull requests that add LLM API calls, embedded model inference, or AI-driven flo
 
 ## Roadmap
 
-- [ ] Basic auth (user/password, bcrypt + session or JWT) for team-internal use during CTFs
-- [ ] Suricata rules CRUD from the UI (list, create, edit, delete rules in `${SURICATA_DIR_HOST}/lib/rules/suricata.rules`, with basic syntax validation and Suricata container reload)
-- [ ] (more — TBD)
+- [x] Basic auth (user/password, bcrypt + session) for team-internal use during CTFs
+- [x] Suricata rules CRUD from the UI, with syntax validation and container reload
+- [x] One-command installer
+- [ ] Loss attribution — link a "lost flag at tick N" scoreboard event to the flow that caused it
+- [ ] Replay with per-team tokenized flagids
 
-## Configuration
+## Quickstart
 
-Before starting the stack, edit `services/api/configurations.py`:
-
-```
-vm_ip = "10.60.4.1"
-services = [{"ip": vm_ip, "port": 18080, "name": "BIOMarkt"},
-            {"ip": vm_ip, "port": 5555, "name": "SaaS"},
-]
-```
-
-You can also edit this during the CTF, just rebuild the `api` service:
-```
-docker compose up --build -d api
+```bash
+git clone https://github.com/JCaleb2001/w4rya.git
+cd w4rya
+./install.sh
 ```
 
-## Usage
+It asks four questions (where your pcaps are, your flag format, the tick length,
+and the admin username + password), checks your machine can run the stack,
+generates the session secret, builds, starts everything, and prints the URL —
+**http://localhost:3001** by default.
 
-The stack can be started with docker compose, after creating an `.env` file. See `.env.example` for how to configure your environment.
+The installer is idempotent: re-run it any time to change settings. It will not
+overwrite your `.env`, rotate your session secret, or touch existing accounts.
+
+```bash
+./install.sh --check      # diagnose an existing install
+./scripts/smoke.sh        # verify a running stack over HTTP
+./scripts/test.sh         # run the api test suite (no database needed)
+```
+
+### Accounts
+
+The installer creates the first account as `admin`. From there, add the rest of
+the team at **/users** in the UI — each teammate gets their own login, so when
+they connect to your instance they sign in as themselves.
+
+| Role | Can do |
+|---|---|
+| `viewer` | browse flows, read and write notes |
+| `operator` | + Suricata rules, block IPs, star flows, replay exploits |
+| `admin` | + `/config`, `/audit`, and user management |
+
+If you ever install without a terminal, the UI shows a first-run wizard instead.
+The CLI escape hatch, for a locked-out install or a password reset:
+
+```bash
+docker compose run --rm api python /app/auth/add_user.py <name> --role admin
+```
+
+### Game configuration
+
+Services, teams, flag format, tick length and the rest are edited at **/config**
+in the UI while the game runs — no rebuild.
+
+> One caveat: the Go assembler reads `FLAG_REGEX` and `BPF` from the environment
+> at boot, so changing those in the UI reaches the API immediately but not the
+> assembler. Run `docker compose restart assembler` after changing them.
+
+## Manual start
+
+If you would rather not use the installer:
 
 ```
 cp .env.example .env
-# < Edit the .env file with your favourite text editor >
+# set W4RYA_SECRET_KEY (openssl rand -hex 32) — the api refuses to start without it
 docker compose up -d --build
 ```
 
@@ -61,6 +102,15 @@ rsync -avz -e ssh --progress root@10.0.0.2:/pcaps ./pcaps
 3. Add a bind to the assembler service so it can read `/traffic` — just change `TRAFFIC_DIR_HOST` in `.env`.
 
 The ingestor uses inotify to watch for new pcaps and Suricata logs; no cron needed.
+
+> [!IMPORTANT]
+> Only files whose **last** extension starts with `.pcap` are ingested. A rotating
+> sniffer that produces `traffic.pcap.1779154618` will be **silently ignored** —
+> rename to `traffic-1779154618.pcap`. `./install.sh --check` flags these for you.
+>
+> Capture **both directions**. A filter like `dst host <vulnbox>` yields a
+> one-sided capture, and w4rya builds no flows at all from it — you need the
+> request and the response. Filter by `port` instead.
 
 ## Suricata synchronization
 
