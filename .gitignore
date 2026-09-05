@@ -157,3 +157,8 @@ suricata
 # from being committed by accident.
 /services/test_pcap/*.pcap
 /services/test_pcap/*.pcapng
+
+# Real CTF captures pulled from the vulnbox (scripts/pull_vulnbox_pcaps.sh)
+/services/vulnbox_pcap/*.pcap
+/services/vulnbox_pcap/*.pcapng
+/.vulnbox_pull_tmp/
