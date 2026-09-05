@@ -177,7 +177,7 @@ ask() {
   printf '%s\n' "${reply:-$default}"
 }
 
-compose() { docker compose -f "$COMPOSE_FILE" "$@"; }
+compose() { MSYS_NO_PATHCONV=1 docker compose -f "$COMPOSE_FILE" "$@"; }
 
 port_in_use() {
   local p="$1"
