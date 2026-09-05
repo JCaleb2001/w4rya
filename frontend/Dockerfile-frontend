@@ -5,7 +5,11 @@ COPY yarn.lock /app/
 
 WORKDIR /app
 
-RUN yarn
+# yarn 1.x gives up on a tarball after 30s of socket silence. Building the six
+# services in parallel starves a slow link well past that, so the default blows
+# up with ESOCKETTIMEDOUT on whichever package happens to be unlucky. Ten
+# minutes of patience and fewer concurrent sockets instead.
+RUN yarn install --frozen-lockfile --network-timeout 600000 --network-concurrency 4
 
 COPY . /app/
 

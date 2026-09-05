@@ -86,6 +86,7 @@ Both files are kept deliberately in sync on three points:
 - **Admin password** is piped over stdin into `add_user.py --stdin` — never argv (world-readable via `/proc`), never an env var (visible in `docker inspect`), never a file. There is deliberately no `--admin-password` flag. `--admin-password-file` exists for CI only.
 - **Compose choice**: `--suricata` / `--no-suricata`; the chosen file is recorded as `W4RYA_COMPOSE_FILE` in `.env` and every other script (`scripts/test.sh`, `scripts/smoke.sh`, `scripts/backup.sh`) reads it from there. Switching stacks brings the old one down first.
 - Also: preflight checks, `W4RYA_UI_PORT` fallback if the port is busy, creates the suricata/auth/rules dirs (Docker would otherwise auto-create them root-owned), retries the build with `DOCKER_BUILDKIT=0` when it detects the wedged-BuildKit-DNS failure, waits on `/api/healthz`, and skips account creation if any account already exists (the `/setup` wizard covers that case).
+- **Tick clock**: `TICK_START` is stamped **once** — when it is missing or still the placeholder `.env.example` ships. A re-run keeps it, because renumbering ticks under a game in progress shifts every bucket in the graphs, and the installer's own "Next" list tells you to re-run once your real pcap directory is ready. `--reset-tick` re-baselines it to now (new game, new ticks).
 - **`--check`** is a read-only doctor mode: no prompts, no writes, tallies failures.
 
 The old root-level `start.sh` and `test.sh` were **deleted** — they referenced compose files that no longer exist. Use `install.sh` and `scripts/test.sh`.
@@ -335,11 +336,15 @@ If you rebuild and hit `Temporary failure in name resolution` from pip, BuildKit
 docker build --network=host -t w4rya-api:latest -f services/api/Dockerfile-api services/api/
 ```
 
+A **slow** link fails differently, and the DNS workaround above does nothing for it. `docker compose build` builds all six services at once; on a thin connection (a NAT'd VM, venue wifi) ten concurrent downloads share the pipe, and yarn 1.x abandons any tarball that goes 30 s without bytes — `ESOCKETTIMEDOUT`, usually on whichever package is unlucky, with `There appears to be trouble with your network connection` above it. DNS is fine in this case: `Resolving packages` completes in seconds, it's `Fetching packages` that dies. `Dockerfile-frontend` now passes `--network-timeout 600000 --network-concurrency 4`, and `install.sh` recognises the timeout signatures and rebuilds one service at a time, which gives each the whole link.
+
+Both diagnoses read only the slice of `install.log` written by the current build (`log_mark`). The log is append-only across runs, so matching the whole file would let a fixed error keep selecting its workaround forever. They match with a here-string, not a pipe: under `pipefail`, `grep -q` exits at the first match and the SIGPIPE'd producer makes the pipeline report 141, so a piped test reads as false exactly when it matches.
+
 `services/api/requirements.txt` is **pinned with `==`** (direct deps only, not a transitive lockfile) so a new upstream Flask/psycopg release can't break the build on a machine that installs tomorrow. Refresh with `docker run --rm w4rya-api:latest pip freeze`.
 
 ### Smoke test (`scripts/smoke.sh`)
 
-Exercises a **running** stack over HTTP, going through the frontend's `/api` proxy rather than straight at the api container — that's the path the browser takes, and a broken proxy is a real failure mode a direct hit would miss. Credentials from `SMOKE_USER` / `SMOKE_PASS` or prompted; never argv. Read-only by default (safe to run mid-CTF); `--yellow` adds writes that restore themselves. It deliberately never calls `POST /attack/replay` — that opens real TCP connections to the configured teams.
+Exercises a **running** stack over HTTP, going through the frontend's `/api` proxy rather than straight at the api container — that's the path the browser takes, and a broken proxy is a real failure mode a direct hit would miss. Credentials from `SMOKE_USER` / `SMOKE_PASS` or prompted; never argv. With no tty and no env vars it fails fast asking for them, instead of posting empty credentials and reporting a confusing `400`. Read-only by default (safe to run mid-CTF); `--yellow` adds writes that restore themselves. It deliberately never calls `POST /attack/replay` — that opens real TCP connections to the configured teams.
 
 ## Backup (D2)
 

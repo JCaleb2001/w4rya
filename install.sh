@@ -29,6 +29,7 @@ USE_SURICATA=""
 DO_BUILD=1
 ROTATE_SECRET=0
 RESET_ENV=0
+RESET_TICK=0
 ALLOW_ROOT=0
 ADMIN_PASSWORD_FILE=""
 
@@ -65,6 +66,7 @@ Options
   --no-build             skip the image build, just bring the stack up
   --rotate-secret        generate a new session secret (logs everyone out)
   --reset-env            recreate .env from .env.example (backs the old one up first)
+  --reset-tick           re-baseline the tick clock to now (new game, new ticks)
   --admin-password-file  read the admin password from this file (CI only)
   --allow-root           permit running as root (not recommended)
   -h, --help             this message
@@ -84,6 +86,7 @@ while [[ $# -gt 0 ]]; do
     --no-build)            DO_BUILD=0 ;;
     --rotate-secret)       ROTATE_SECRET=1 ;;
     --reset-env)           RESET_ENV=1 ;;
+    --reset-tick)          RESET_TICK=1 ;;
     --admin-password-file) ADMIN_PASSWORD_FILE="${2:-}"; shift ;;
     --allow-root)          ALLOW_ROOT=1 ;;
     -h|--help)             usage; exit 0 ;;
@@ -185,6 +188,14 @@ port_in_use() {
   fi
 }
 
+# Account names, one per line. users.yaml is two levels deep and the name is
+# the only key indented by exactly two spaces.
+user_names() {
+  local f="./auth/users.yaml"
+  [[ -f "$f" ]] || return 0
+  sed -n 's/^  \([A-Za-z0-9_-]\{1,32\}\):[[:space:]]*$/\1/p' "$f"
+}
+
 user_count() {
   local f="./auth/users.yaml"
   [[ -f "$f" ]] || { echo 0; return; }
@@ -271,6 +282,10 @@ do_install() {
     [[ -f "$ENV_EXAMPLE" ]] || die "$ENV_EXAMPLE missing — is this a w4rya checkout?"
     cp "$ENV_EXAMPLE" "$ENV_FILE"
     chmod 600 "$ENV_FILE"
+    # Nothing to preserve: this .env is a pristine copy of .env.example, and
+    # the first env_set would otherwise leave a useless .env.bak.* next to it
+    # on every fresh clone.
+    ENV_BACKED_UP=1
     ok "created .env from .env.example"
   else
     chmod 600 "$ENV_FILE"
@@ -328,8 +343,21 @@ do_install() {
   local tick; tick="$(ask 'Tick length in seconds?' "$((tick_ms / 1000))")"
   [[ "$tick" =~ ^[0-9]+$ && "$tick" -gt 0 ]] || die "tick length must be a positive integer, got: $tick"
   env_set TICK_LENGTH "$((tick * 1000))"
-  env_set TICK_START "\"$(date -u +%Y-%m-%dT%H:%M:00Z)\""
-  ok "tick: ${tick}s, starting now"
+  # TICK_START is the epoch every tick number is counted from. Re-stamping it
+  # on an existing install renumbers every tick and shifts the graph buckets
+  # under a game already in progress -- and the summary tells you to re-run
+  # this script once your real capture directory is ready. So it is written
+  # only when there is nothing worth keeping: no value at all, or still the
+  # placeholder .env.example ships. --reset-tick forces a new baseline.
+  local tick_start; tick_start="$(env_get TICK_START)"
+  local tick_start_stale; tick_start_stale="$(env_get TICK_START "$ENV_EXAMPLE")"
+  if [[ $RESET_TICK -eq 1 || -z "$tick_start" || "$tick_start" == "$tick_start_stale" ]]; then
+    env_set TICK_START "\"$(date -u +%Y-%m-%dT%H:%M:00Z)\""
+    ok "tick: ${tick}s, starting now"
+  else
+    ok "tick: ${tick}s, counting from $tick_start"
+    info "--reset-tick re-baselines the clock to now"
+  fi
 
   # compose file
   if [[ -z "$USE_SURICATA" ]]; then USE_SURICATA=0; fi
@@ -370,11 +398,33 @@ do_install() {
   # --- build + up ---------------------------------------------------------
   if [[ $DO_BUILD -eq 1 ]]; then
     step "Building images (first run takes a while — it compiles a Postgres extension)"
+    local log_mark; log_mark=$(( $(wc -l <"$LOG" 2>/dev/null || echo 0) + 1 ))
     if ! compose build >>"$LOG" 2>&1; then
-      if grep -qE 'Temporary failure in name resolution|Could not resolve host|Failed to establish a new connection' "$LOG"; then
+      # $LOG is append-only across runs, so diagnose from what THIS build wrote:
+      # a stale error from an earlier attempt would otherwise pick the workaround
+      # for a failure that has already been fixed. Held in a variable and matched
+      # with a here-string rather than piped — under `pipefail`, `grep -q` exits
+      # on the first match and the SIGPIPE'd producer would make the whole
+      # pipeline report 141, i.e. every one of these tests would read as false.
+      local build_out; build_out="$(tail -n "+$log_mark" "$LOG")"
+      if grep -qE 'Temporary failure in name resolution|Could not resolve host|Failed to establish a new connection' <<<"$build_out"; then
         warn "BuildKit's DNS is wedged — a known issue on some hosts. Retrying with --network=host."
         DOCKER_BUILDKIT=0 compose build >>"$LOG" 2>&1 \
           || { tail -30 "$LOG"; die "build failed even with the workaround — see $LOG"; }
+      elif grep -qE 'ESOCKETTIMEDOUT|ETIMEDOUT|There appears to be trouble with your network connection|context deadline exceeded|TLS handshake timeout|i/o timeout' <<<"$build_out"; then
+        # Not a broken network — a slow one. Compose builds every service at once,
+        # so on a thin link (a NAT'd VM, hotel wifi, a CTF venue) ten downloads
+        # share the pipe and each one stalls past its own timeout. Building one
+        # service at a time gives each the whole link.
+        warn "a download timed out — the parallel build is starving your connection."
+        info "retrying one service at a time; slower, but it finishes"
+        local svc
+        for svc in $(compose config --services); do
+          info "building $svc"
+          # Services that only pull an image (suricata) are a no-op here, not an error.
+          compose build "$svc" >>"$LOG" 2>&1 \
+            || { tail -30 "$LOG"; die "build failed on $svc even one at a time — see $LOG"; }
+        done
       else
         tail -30 "$LOG"
         die "build failed — see $LOG"
@@ -404,6 +454,14 @@ do_install() {
   if [[ "$existing" -gt 0 ]]; then
     ok "$existing account(s) already exist — skipping"
     info "add more from the UI at /users, or with auth/add_user.py"
+    # create_admin is what normally sets ADMIN_USER, so on a re-run the
+    # summary would announce "no account yet" one line after saying accounts
+    # exist. Name the single account when there is one, stay vague otherwise.
+    if [[ "$existing" -eq 1 ]]; then
+      ADMIN_USER="$(user_names | head -1)"
+    else
+      ADMIN_USER="one of your $existing existing accounts"
+    fi
   else
     create_admin "$port"
   fi
