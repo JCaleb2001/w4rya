@@ -12,6 +12,8 @@
 #   VULNBOX_PCAP_DIR  capture dir on the vulnbox (default /root/pcaps)
 #   ROTATE_SECONDS    new file every N seconds   (default 60)
 #   ROTATE_MB         or sooner past N MB        (default 100)
+#   BPF_FILTER        tcpdump expression, by port only — e.g.
+#                     'tcp port 8008 or tcp port 8000' (default: none, capture all)
 #
 # Pairs with scripts/pull_vulnbox_pcaps.sh, which fetches closed files into
 # w4rya's traffic dir and deletes them from the vulnbox once verified.
@@ -23,6 +25,7 @@ IFACE="${VULNBOX_IFACE:-game}"
 REMOTE_DIR="${VULNBOX_PCAP_DIR:-/root/pcaps}"
 ROTATE_SECONDS="${ROTATE_SECONDS:-60}"
 ROTATE_MB="${ROTATE_MB:-100}"
+BPF_FILTER="${BPF_FILTER:-}"
 REMOTE_SCRIPT_PATH="/root/.w4rya_remote_capture.sh"
 
 CMD="${1:-}"
@@ -32,4 +35,4 @@ case "$CMD" in
 esac
 
 scp -q "$(dirname "${BASH_SOURCE[0]}")/vulnbox/remote_capture.sh" "$HOST:$REMOTE_SCRIPT_PATH"
-ssh "$HOST" "bash '$REMOTE_SCRIPT_PATH' '$CMD' '$IFACE' '$REMOTE_DIR' '$ROTATE_SECONDS' '$ROTATE_MB'"
+ssh "$HOST" "bash '$REMOTE_SCRIPT_PATH' '$CMD' '$IFACE' '$REMOTE_DIR' '$ROTATE_SECONDS' '$ROTATE_MB' '$BPF_FILTER'"
