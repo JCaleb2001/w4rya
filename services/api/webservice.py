@@ -387,6 +387,15 @@ def query():
             tags_include=[str(elem) for elem in query.get("tags_include", [])],
             tags_exclude=[str(elem) for elem in query.get("tags_exclude", [])],
             tag_intersection_and=query.get("tag_intersection_mode", "").lower() == "and",
+            # The checker and our own tooling account for nearly all the
+            # volume; hiding them is what leaves the traffic worth reading.
+            # Resolved server-side so the frontend never has to know which ips
+            # count as noise.
+            ip_src_exclude=(
+                app_config.parse_noise_ips(app_config.get("noise_ips"))
+                if query.get("hide_noise")
+                else []
+            ),
         )
     except re.error as error:
         return return_json_response(

@@ -90,6 +90,9 @@ function GameForm({ canEdit }: { canEdit: boolean }) {
     team_id: { label: "our team id" },
     visualizer_url: { label: "visualizer url (optional)" },
     bpf: { label: "bpf filter (optional)", note: RESTART },
+    noise_ips: {
+      label: "noise ips (checker, our own tooling — comma separated)",
+    },
   };
 
   return (

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import os
+from ipaddress import ip_network
 import re
 import threading
 import time
@@ -70,6 +71,10 @@ DEFAULTS: dict[str, Any] = {
     "bpf": os.environ.get("BPF", ""),
     # B1: trigger suricatasc reload-rules after every rules CRUD when on
     "rules_autoreload": False,
+    # Sources whose traffic is expected and drowns out everything else:
+    # the checker (plants and reads its own flag every tick) and our own
+    # tooling talking to the vulnbox. Comma-separated ips or CIDRs.
+    "noise_ips": os.environ.get("NOISE_IPS", ""),
 }
 
 
@@ -211,12 +216,28 @@ SCALAR_KEYS = {
     "visualizer_url",
     "bpf",
     "rules_autoreload",
+    "noise_ips",
 }
 
 BOOL_KEYS = {"rules_autoreload"}
 
 
 _REDOS_HINT = re.compile(r"\([^)]*[+*][^)]*\)[+*]")
+
+
+def parse_noise_ips(raw: Any) -> list:
+    """Split the stored "a, b" string into ip_network objects.
+
+    Stored as one scalar string rather than a list so it lands in the
+    existing Game form instead of needing a list editor of its own.
+    """
+    out = []
+    for part in str(raw or "").replace(";", ",").split(","):
+        part = part.strip()
+        if not part:
+            continue
+        out.append(ip_network(part, strict=False))
+    return out
 
 
 def coerce_scalar(key: str, raw: Any) -> Any:
@@ -230,6 +251,14 @@ def coerce_scalar(key: str, raw: Any) -> Any:
         if isinstance(raw, str):
             return raw.strip().lower() in ("true", "1", "yes", "on")
         return False
+    if key == "noise_ips":
+        # Validate at write time: a typo here would silently stop hiding
+        # the checker, and the operator would just see noise come back.
+        try:
+            nets = parse_noise_ips(raw)
+        except ValueError as e:
+            raise ValueError(f"invalid ip or CIDR: {e}")
+        return ", ".join(str(n) for n in nets)
     if key == "flag_regex":
         s = str(raw)
         # D1: validate at write-time so a typo doesn't break /query for the

@@ -32,6 +32,9 @@ class FlowQuery:
     # Multi-service filter: list of (ip, port) pairs OR-ed together. Lets the
     # UI multi-select chips translate to a single SQL query.
     services: list[tuple[IPv4Network | IPv6Network, int]] = field(default_factory=list)
+    # Sources to drop: the checker and our own tooling. Excluded rather
+    # than filtered in the UI so the row limit is spent on real traffic.
+    ip_src_exclude: list[IPv4Network | IPv6Network] = field(default_factory=list)
     time_from: datetime | None = None
     time_to: datetime | None = None
     tags_include: list[str] = field(default_factory=list)
@@ -172,6 +175,16 @@ class Connection(psycopg.Connection):
                     )
                 )
             conditions.append(sql.SQL("(") + sql.SQL(" OR ").join(pair_sqls) + sql.SQL(")"))
+
+        if query.ip_src_exclude:
+            excl_sqls = []
+            for i, net in enumerate(query.ip_src_exclude):
+                key = f"ip_src_excl_{i}"
+                parameters[key] = net
+                excl_sqls.append(sql.SQL("f.ip_src <<= %({k})s").format(k=sql.SQL(key)))
+            conditions.append(
+                sql.SQL("NOT (") + sql.SQL(" OR ").join(excl_sqls) + sql.SQL(")")
+            )
 
         if query.time_from:
             parameters["time_from"] = query.time_from

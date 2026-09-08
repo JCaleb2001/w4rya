@@ -415,6 +415,7 @@ export interface GameConfig {
   visualizer_url: string;
   bpf: string;
   rules_autoreload?: boolean;
+  noise_ips?: string;
 }
 
 export interface Team {

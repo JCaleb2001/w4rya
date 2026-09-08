@@ -314,7 +314,21 @@ Change `W4RYA_SECRET_KEY` in `.env` and `docker compose restart api`. All existi
 
 DB table `app_config (key text pk, value jsonb, updated_at)` — module `services/api/app_config.py`. Set from UI, read by routes via `app_config.get(key)` with a 5s cache; writes invalidate the cache for that key.
 
-Stored keys: `services` (list of {name, ip, port, notes}), `teams` (list of {name, ip, notes}), `flag_regex`, `tick_length`, `start_date`, `flag_lifetime`, `vm_ip`, `team_id`, `visualizer_url`, `bpf`.
+Stored keys: `services` (list of {name, ip, port, notes}), `teams` (list of {name, ip, notes}), `flag_regex`, `tick_length`, `start_date`, `flag_lifetime`, `vm_ip`, `team_id`, `visualizer_url`, `bpf`, `noise_ips`.
+
+**`noise_ips`** is the checker + our-own-tooling list that `show_attacker_flows.sh`
+used to carry in environment variables. It is a comma-separated **string**, not a
+list, specifically so it renders in the existing Game form instead of needing a list
+editor. `app_config.parse_noise_ips()` turns it into `ip_network` objects (host bits
+tolerated, `;` accepted as a separator); `coerce_scalar` validates at write time,
+because a silently-dropped typo just looks like the checker coming back.
+
+`POST /query` takes **`hide_noise: true`** and resolves the list server-side into
+`FlowQuery.ip_src_exclude` — the frontend sends the intent and never learns which ips
+count as noise. Excluding in SQL rather than filtering client-side matters: the row
+limit then gets spent on real traffic. The sidebar toggle lives in the filter panel
+under `▎noise` and defaults to **on** (`filter.hideNoise`), which is a no-op until
+`noise_ips` is actually set.
 
 Endpoints: `GET/PUT /config`, `GET/PUT /config/services`, `GET/PUT /config/teams`. `GET /services` and `GET /flag_regex` still work (read from the same DB row).
 
