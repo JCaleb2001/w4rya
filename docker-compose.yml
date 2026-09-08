@@ -41,7 +41,12 @@ services:
     ports:
       # Parameterised so install.sh can move the UI off a busy port. The
       # default matches what the README and install.sh print.
-      - "${W4RYA_UI_PORT:-3001}:3000"
+      # SECURITY: bind to loopback by default. Without an interface prefix
+      # Docker binds 0.0.0.0, and since the frontend proxies /api -> api:5000,
+      # publishing this port publishes the WHOLE API to the CTF network.
+      # To let teammates in, prefer a VPN/SSH tunnel; if you must expose it,
+      # set W4RYA_BIND_IP to the team VPN interface IP -- never 0.0.0.0.
+      - "${W4RYA_BIND_IP:-127.0.0.1}:${W4RYA_UI_PORT:-3001}:3000"
     expose:
       - 3000
     depends_on:
