@@ -20,6 +20,9 @@ readonly ENV_EXAMPLE="./.env.example"
 readonly DEFAULT_COMPOSE="docker-compose.yml"
 readonly SURICATA_COMPOSE="docker-compose-suricata.yml"
 readonly DEFAULT_UI_PORT=3001
+# Loopback by default: the frontend proxies /api to the api container, so the
+# UI port is the whole API. See the W4RYA_BIND_IP note in .env.example.
+readonly DEFAULT_BIND_IP="127.0.0.1"
 
 # --- flags -----------------------------------------------------------------
 MODE=install
@@ -384,6 +387,17 @@ do_install() {
   env_set W4RYA_UI_PORT "$port"
   ok "UI port: $port"
 
+  # bind interface — kept next to the port because the two are one decision.
+  # Never prompted for: loopback is the safe answer, and anyone who needs a
+  # different one can set it in .env deliberately.
+  local bind_ip; bind_ip="$(env_get_or W4RYA_BIND_IP "$DEFAULT_BIND_IP")"
+  env_set W4RYA_BIND_IP "$bind_ip"
+  if [[ "$bind_ip" == "0.0.0.0" ]]; then
+    warn "W4RYA_BIND_IP=0.0.0.0 publishes the API to every network this host is on"
+  else
+    ok "UI bound to: $bind_ip"
+  fi
+
   # suricata dirs — nothing else creates these, and if Docker auto-creates
   # them they come out root-owned.
   if [[ "$USE_SURICATA" -eq 1 ]]; then
@@ -466,7 +480,7 @@ do_install() {
     create_admin "$port"
   fi
 
-  print_summary "$port"
+  print_summary "$port" "$(env_get_or W4RYA_BIND_IP "$DEFAULT_BIND_IP")"
 }
 
 create_admin() {
@@ -519,14 +533,27 @@ create_admin() {
 }
 
 print_summary() {
-  local port="$1" ip; ip="$(lan_ip || true)"
+  local port="$1" bind_ip="${2:-$DEFAULT_BIND_IP}" ip; ip="$(lan_ip || true)"
   cat <<EOF
 
 ${C_B}w4rya is running.${C_R}
 
   UI              http://localhost:${port}
 EOF
-  [[ -n "$ip" ]] && printf '                  http://%s:%s   %s(teammates on your network)%s\n' "$ip" "$port" "$C_DIM" "$C_R"
+  # Only advertise a network URL when one actually exists. Under the default
+  # loopback bind nothing off this host can reach the port, so point teammates
+  # at a tunnel rather than a URL that would just time out.
+  if [[ "$bind_ip" == "127.0.0.1" || "$bind_ip" == "localhost" ]]; then
+    printf '                  %steammates: ssh -L %s:127.0.0.1:%s %s%s
+' \
+      "$C_DIM" "$port" "$port" "${ip:-<this-host>}" "$C_R"
+  elif [[ "$bind_ip" == "0.0.0.0" ]]; then
+    [[ -n "$ip" ]] && printf '                  http://%s:%s   %s(reachable from EVERY network, including the game one)%s
+' "$ip" "$port" "$C_DIM" "$C_R"
+  else
+    printf '                  http://%s:%s   %s(teammates on that interface)%s
+' "$bind_ip" "$port" "$C_DIM" "$C_R"
+  fi
   cat <<EOF
   Sign in as      ${ADMIN_USER:-<none yet — the UI will ask you to create one>}
   Stack           ${COMPOSE_FILE}
@@ -617,6 +644,17 @@ do_check() {
   else
     check_fail "api unreachable on :${port} — try: docker compose logs api"
   fi
+
+  # What the UI port is actually bound to. Asking Docker beats trusting .env:
+  # a stack brought up before W4RYA_BIND_IP existed is still on 0.0.0.0 until
+  # it is recreated, and that is exactly the case worth catching.
+  local published; published="$(compose port frontend 3000 2>/dev/null | tail -1)"
+  case "${published%:*}" in
+    "")            : ;;  # not running; the check above already said so
+    0.0.0.0|"[::]") check_fail "the UI is published on ${published} — that exposes the API to every network this host is on; set W4RYA_BIND_IP and run: docker compose up -d frontend" ;;
+    127.0.0.1)     ok "UI bound to loopback (${published})" ;;
+    *)             warn "UI bound to ${published} — make sure that interface is the team VPN, not the game network" ;;
+  esac
 
   local st; st="$(curl -fsS --connect-timeout 3 --max-time 5 "http://127.0.0.1:${port}/api/setup/status" 2>/dev/null || true)"
   if grep -q '"needs_setup":true' <<<"$st"; then

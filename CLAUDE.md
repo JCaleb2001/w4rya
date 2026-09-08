@@ -97,7 +97,14 @@ Both files are kept deliberately in sync on three points:
 - **Compose choice**: `--suricata` / `--no-suricata`; the chosen file is recorded as `W4RYA_COMPOSE_FILE` in `.env` and every other script (`scripts/test.sh`, `scripts/smoke.sh`, `scripts/backup.sh`) reads it from there. Switching stacks brings the old one down first.
 - Also: preflight checks, `W4RYA_UI_PORT` fallback if the port is busy, creates the suricata/auth/rules dirs (Docker would otherwise auto-create them root-owned), retries the build with `DOCKER_BUILDKIT=0` when it detects the wedged-BuildKit-DNS failure, waits on `/api/healthz`, and skips account creation if any account already exists (the `/setup` wizard covers that case).
 - **Tick clock**: `TICK_START` is stamped **once** — when it is missing or still the placeholder `.env.example` ships. A re-run keeps it, because renumbering ticks under a game in progress shifts every bucket in the graphs, and the installer's own "Next" list tells you to re-run once your real pcap directory is ready. `--reset-tick` re-baselines it to now (new game, new ticks).
-- **`--check`** is a read-only doctor mode: no prompts, no writes, tallies failures.
+- **Bind interface**: `W4RYA_BIND_IP` is upserted next to `W4RYA_UI_PORT` (default
+  `127.0.0.1`) and never prompted for — loopback is the right answer and anything else
+  should be a deliberate edit. `0.0.0.0` draws a warning. The final summary adapts: under
+  a loopback bind it prints an `ssh -L` line instead of a LAN URL that could not work.
+- **`--check`** is a read-only doctor mode: no prompts, no writes, tallies failures. It
+  asks Docker (`compose port frontend 3000`) what the UI is *actually* bound to rather
+  than trusting `.env` — a stack brought up before `W4RYA_BIND_IP` existed stays on
+  `0.0.0.0` until it is recreated, which is exactly the case worth catching.
 
 The old root-level `start.sh` and `test.sh` were **deleted** — they referenced compose files that no longer exist. Use `install.sh` and `scripts/test.sh`.
 
@@ -361,7 +368,7 @@ Backend remains the security boundary (403 with `{required_role, your_role}`); t
 
 ## Tests
 
-~250 tests in `services/api/tests/`, all offline, a few seconds (`./scripts/test.sh -q` prints the current count):
+~305 tests in `services/api/tests/`, all offline, a few seconds (`./scripts/test.sh -q` prints the current count):
 
 | File | covers |
 |---|---|
