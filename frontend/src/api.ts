@@ -356,6 +356,9 @@ export const w4ryaApi = createApi({
       query: (ticks) => `/services/stats?ticks=${ticks ?? 5}`,
       providesTags: ["Services"],
     }),
+    getPipelineHealth: builder.query<PipelineHealth, void>({
+      query: () => "/pipeline/health",
+    }),
     getAttacks: builder.query<AttacksPayload, AttacksQuery>({
       query: (q) => {
         const sp = new URLSearchParams();
@@ -504,6 +507,28 @@ export interface ServicesStatsPayload {
   tick_length_ms: number;
   from: string;
   services: ServiceStats[];
+}
+
+export type PipelineStatus = "ok" | "lagging" | "stalled" | "idle";
+
+export interface PipelineHealth {
+  now: string;
+  status: PipelineStatus;
+  detail: string;
+  lag_seconds: number | null;
+  stale_after_seconds: number;
+  last_flow_time: string | null;
+  flows: { last_tick: number; last_hour: number };
+  pcaps: {
+    dir: string;
+    readable: boolean;
+    // null whenever the capture directory isn't mounted into the api
+    on_disk: number | null;
+    pending: number | null;
+    newest_on_disk: string | null;
+    ingested: number;
+  };
+  tick_length_ms: number;
 }
 
 export interface AttackRule {
@@ -664,6 +689,7 @@ export const {
   useBlockIpMutation,
   useReloadRulesMutation,
   useGetServicesStatsQuery,
+  useGetPipelineHealthQuery,
   useGetAttacksQuery,
   useGetAuditQuery,
   useGetAuditActorsQuery,

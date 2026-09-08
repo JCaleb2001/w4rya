@@ -487,3 +487,44 @@ class Connection(psycopg.Connection):
                 "flag_out": int(row["flag_out"] or 0) if row else 0,
             })
         return out
+
+    def pipeline_health(self, tick_start: datetime, hour_start: datetime,
+                        horizon: datetime) -> dict:
+        """Freshness of the ingest pipeline: newest flow, and recent volume.
+
+        Every predicate goes through fid_pack_low(...) on the primary key
+        rather than the generated `time` column, which is what the rest of the
+        query paths do -- `time` has no index of its own, so a bare max(time)
+        would scan the whole table. `horizon` bounds the max(): if nothing has
+        been ingested since then the answer is NULL, which the caller reads as
+        "no recent traffic" rather than paying for a full scan to find some
+        flow from three games ago.
+        """
+        sql_query = """
+            SELECT max(time)                                         AS last_flow_time,
+                   count(*) FILTER (WHERE id > fid_pack_low(%(tick_start)s)) AS flows_last_tick,
+                   count(*) FILTER (WHERE id > fid_pack_low(%(hour_start)s)) AS flows_last_hour
+            FROM flow
+            WHERE id > fid_pack_low(%(horizon)s)
+        """
+        with self.cursor(row_factory=dict_row) as cursor:
+            row = cursor.execute(sql_query, {
+                "tick_start": tick_start,
+                "hour_start": hour_start,
+                "horizon": horizon,
+            }).fetchone()
+        return {
+            "last_flow_time": row["last_flow_time"] if row else None,
+            "flows_last_tick": int(row["flows_last_tick"] or 0) if row else 0,
+            "flows_last_hour": int(row["flows_last_hour"] or 0) if row else 0,
+        }
+
+    def ingested_pcap_names(self) -> list[str]:
+        """Basenames of every pcap the assembler has recorded.
+
+        The assembler stores the path it opened ("/traffic/foo.pcap"), so the
+        caller compares basenames against what is on disk.
+        """
+        with self.cursor() as cursor:
+            rows = cursor.execute("SELECT name FROM pcap").fetchall()
+        return [str(r[0]).rsplit("/", 1)[-1] for r in rows]

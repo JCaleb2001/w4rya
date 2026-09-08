@@ -359,6 +359,37 @@ Client-only. `FlagLeakWatcher` polls `/query` with `tags_include=['flag-out']` e
 
 Frontend uses this to render mini-counts on each service chip in the sidebar — chip border cascades danger (flag-out) > warning (attacks) > violet (any flows) > dim (idle).
 
+## Pipeline health (`/pipeline/health`)
+
+"Why am I not seeing traffic?" is the most expensive question during a game, and answering
+it by hand means checking the capture, the pull loop, the assembler and the database in
+turn. This is that check as one call.
+
+`GET /pipeline/health` (any role) returns `status` plus the evidence behind it:
+
+| status | means | where to look |
+|---|---|---|
+| `ok` | newest flow is younger than the stale window | — |
+| `lagging` | flows are old, **nothing** is waiting on disk | the vulnbox: capture or pull loop |
+| `stalled` | flows are old **and** pcaps on disk aren't in the flow table | the assembler |
+| `idle` | no flows at all within the horizon | fresh install, or nothing ever ingested |
+
+The `lagging` / `stalled` split is the point of the endpoint: it says which half of the
+pipeline to go look at.
+
+- **Stale window** = 2 ticks (min 60s), so one slow rotate-then-pull cycle doesn't cry wolf.
+- **Horizon** = 1 day, and it exists for query cost. `flow.time` is a generated column with
+  no index of its own, so a bare `max(time)` scans the table; every predicate goes through
+  `fid_pack_low()` on the primary key instead, exactly like the other query paths.
+- **Disk side** reads `configurations.traffic_dir` (the api already bind-mounts the capture
+  dir read-only). If it isn't mounted, `pcaps.readable` is `false` and the counts are
+  `null` — the database half still answers rather than 500ing.
+- `pcaps.ingested` counts rows in the `pcap` table, so it can exceed `on_disk` once files
+  have been rotated away — the assembler remembers what it consumed.
+
+UI: a lag counter in the war-room top bar, and a banner that appears **only** when the
+status isn't `ok` (a wall display with a permanent status bar teaches people to ignore it).
+
 ## Attack timeline (B3, `/attacks`)
 
 `GET /attacks?from_tick=N&to_tick=M&service=NAME&limit=K`. Joins `flow` + signatures + flag-out tag. Returns chronological events with src/dst, service, type (`alert`|`flag_out`|`both`), rule msgs, flag count. Default window = last 10 ticks. Frontend `/attacks` route renders the table with range presets and a service filter dropdown.

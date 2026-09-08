@@ -54,6 +54,7 @@ from flask_cors import CORS
 from flask import request
 
 from flow2pwn import flow2pwn
+import configurations
 import database, json_util
 import auth
 import app_config
@@ -552,6 +553,110 @@ def get_services_stats():
         "tick_length_ms": tick_length_ms,
         "from": time_start.isoformat(),
         "services": rows,
+    })
+
+
+# How many ticks without a newer flow before the pipeline is called lagging.
+# Two is deliberate: one tick of slack covers the normal rotate-then-pull
+# round trip, so a single slow cycle doesn't cry wolf mid-game.
+PIPELINE_STALE_TICKS = 2
+# Bound for the "newest flow" lookup. Older than this and the answer is simply
+# "nothing recent", which is the useful answer anyway -- and it keeps the query
+# off the full flow table.
+PIPELINE_HORIZON = timedelta(days=1)
+
+
+def _pcap_dir_state(ingested: set[str]) -> dict:
+    """Compare the pcaps on disk with the ones the assembler has recorded.
+
+    The api mounts the capture directory read-only, but tolerate it not being
+    there: an api container started before that mount existed should degrade to
+    "unknown", not 500.
+    """
+    state = {
+        "dir": str(configurations.traffic_dir),
+        "readable": False,
+        "on_disk": None,
+        "pending": None,
+        "newest_on_disk": None,
+    }
+    try:
+        names = sorted(
+            f.name for f in configurations.traffic_dir.iterdir()
+            if f.is_file() and f.suffix.startswith(".pcap")
+        )
+    except OSError:
+        return state
+
+    state["readable"] = True
+    state["on_disk"] = len(names)
+    state["newest_on_disk"] = names[-1] if names else None
+    # The newest file is normally still being written by tcpdump, so it is
+    # expected to be un-ingested; counting it as pending would leave the panel
+    # permanently showing 1.
+    state["pending"] = len([n for n in names if n not in ingested])
+    return state
+
+
+@application.route("/pipeline/health")
+def pipeline_health():
+    """Is traffic actually flowing from the vulnbox into the flow table?
+
+    "Why am I not seeing traffic?" is the most expensive question during a
+    game, and answering it by hand means checking the capture, the pull loop,
+    the assembler and the database in turn. This is that check as one call.
+    """
+    tick_length_ms = int(app_config.get("tick_length") or 180000)
+    now = datetime.now(tz=timezone.utc)
+    tick_start = now - timedelta(milliseconds=tick_length_ms)
+
+    with db.connection() as c:
+        health = c.pipeline_health(
+            tick_start=tick_start,
+            hour_start=now - timedelta(hours=1),
+            horizon=now - PIPELINE_HORIZON,
+        )
+        ingested = c.ingested_pcap_names()
+
+    pcaps = _pcap_dir_state(set(ingested))
+    pcaps["ingested"] = len(ingested)
+
+    last_flow_time = health["last_flow_time"]
+    lag_seconds = (now - last_flow_time).total_seconds() if last_flow_time else None
+
+    stale_after = max(PIPELINE_STALE_TICKS * tick_length_ms / 1000.0, 60.0)
+    if lag_seconds is None:
+        status = "idle"
+        detail = "no flows in the last day — has the assembler ever ingested anything?"
+    elif lag_seconds > stale_after:
+        status = "stalled" if pcaps["pending"] else "lagging"
+        if status == "stalled":
+            detail = (
+                f"{pcaps['pending']} pcap(s) on disk are not in the flow table and the "
+                f"newest flow is {int(lag_seconds)}s old — check: docker compose logs assembler"
+            )
+        else:
+            detail = (
+                f"newest flow is {int(lag_seconds)}s old and nothing is waiting on disk — "
+                "check the capture and the pull loop on the vulnbox"
+            )
+    else:
+        status = "ok"
+        detail = f"newest flow is {int(lag_seconds)}s old"
+
+    return return_json_response({
+        "now": now,
+        "status": status,
+        "detail": detail,
+        "lag_seconds": lag_seconds,
+        "stale_after_seconds": stale_after,
+        "last_flow_time": last_flow_time,
+        "flows": {
+            "last_tick": health["flows_last_tick"],
+            "last_hour": health["flows_last_hour"],
+        },
+        "pcaps": pcaps,
+        "tick_length_ms": tick_length_ms,
     })
 
 
