@@ -614,6 +614,19 @@ do_check() {
                      || warn "no pcaps in $pcap_dir — the assembler is running but ingesting nothing"
     local odd; odd="$(find "$pcap_dir" -maxdepth 1 -type f -name '*pcap*' ! -name '*.pcap' ! -name '*.pcapng' 2>/dev/null | head -3)"
     [[ -n "$odd" ]] && { warn "these will be silently ignored (last extension is not .pcap*):"; printf '       %s\n' $odd; }
+
+    # Capture volume vs. free space. A long game fills the disk, and the
+    # first thing to die is Timescale, which is the worst thing that can die
+    # -- so warn while there is still time to move or prune the older files.
+    local pcap_mb free_kb free_gb
+    pcap_mb="$(du -sm "$pcap_dir" 2>/dev/null | awk '{print $1}')" || pcap_mb=""
+    free_kb="$(df -Pk "$pcap_dir" 2>/dev/null | awk 'NR==2 {print $4}')" || free_kb=""
+    if [[ -n "${pcap_mb:-}" && -n "${free_kb:-}" ]]; then
+      free_gb=$((free_kb / 1024 / 1024))
+      if   [[ $free_gb -lt 2 ]];  then check_fail "only ${free_gb} GB free where the pcaps live (${pcap_mb} MB captured) -- ingest and Timescale will fail before the game ends"
+      elif [[ $free_gb -lt 10 ]]; then warn "${free_gb} GB free where the pcaps live (${pcap_mb} MB captured) -- watch this during a long game"
+      else ok "capture: ${pcap_mb} MB of pcaps, ${free_gb} GB free"; fi
+    fi
   else
     check_fail "TRAFFIC_DIR_HOST '$pcap_dir' does not exist"
   fi
