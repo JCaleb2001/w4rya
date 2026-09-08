@@ -143,6 +143,10 @@ services:
       DUMP_PCAPS_INTERVAL: ${DUMP_PCAPS_INTERVAL}
       DUMP_PCAPS_FILENAME: ${DUMP_PCAPS_FILENAME}
       BPF: ${BPF:-}
+      # fsnotify fallback rescan. Docker Desktop's Windows bind mounts drop
+      # inotify events, so without this the assembler can sit idle while pcaps
+      # pile up in the watch dir. Set to 0 to rely on fsnotify alone.
+      WATCH_POLL_INTERVAL: ${WATCH_POLL_INTERVAL:-10s}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     mem_limit: 1536m

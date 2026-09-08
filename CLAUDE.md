@@ -148,11 +148,32 @@ env overrides, so a different game means exporting them, not editing the scripts
   reads its own flag every tick, and our own tooling talks to the box locally — so
   subtracting them leaves the traffic actually worth reading. `--since 10min` narrows the
   window; `--watch` polls every `WATCH_SECONDS` (10) and prints only rows it hasn't seen.
-- **`scripts/windows_assembler_watchdog.sh`** — `docker compose restart assembler` every
-  `INTERVAL_SECONDS` (120). Docker Desktop's Windows bind mounts don't reliably deliver
-  fsnotify events, so the assembler can sit idle while pcaps pile up in its watch dir. It
-  does a full directory scan at boot, so restarting it is enough to catch up. **Not needed
-  on native Linux Docker** — inotify works there.
+- **`scripts/windows_assembler_watchdog.sh`** — **deprecated**, kept only for an
+  assembler image built before the rescan below. It restarted the container every 120s to
+  force the boot-time directory scan, which also dropped whatever was mid-assembly at each
+  restart.
+
+### Why the assembler polls its watch dir
+
+`WatchDir` in `cmd/assembler/main.go` does an initial full scan, then keeps watching with
+**two** independent triggers, both funnelling into a single `scanDir` call:
+
+- **fsnotify**, as before — but the event handler no longer ingests anything itself. It
+  does a non-blocking send on a `wake` channel, so a burst of events collapses into one
+  follow-up scan.
+- **a poll ticker** (`WATCH_POLL_INTERVAL`, default `10s`), which is the whole point:
+  Docker Desktop's Windows bind mounts drop inotify events, so a pcap can land in the
+  watch dir with no event ever arriving.
+
+`scanDir` is deliberately the **only** ingestion path once the watcher is up.
+`ProcessPcapHandle` mutates shared assembler state, so two goroutines spotting the same
+file must not both process it. It re-offers a file only when its size or mtime changed,
+and re-offering is cheap and safe because `PcapFindOrInsert` records how many packets of
+that filename were already ingested and skips them (`Skipped N packets from ...` in the
+log). It also drops files that have disappeared from its map, so a retention sweep can't
+leak memory over a long game.
+
+Set `WATCH_POLL_INTERVAL=0` to rely on fsnotify alone — fine on native Linux Docker.
 
 Both run `docker compose` under `MSYS_NO_PATHCONV=1`, for the same reason `install.sh`
 does (`7a74ab8`): Git-Bash rewrites container-absolute paths into Windows paths before

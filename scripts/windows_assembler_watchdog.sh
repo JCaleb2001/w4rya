@@ -1,5 +1,12 @@
 #!/usr/bin/env bash
 #
+# DEPRECATED — the assembler now rescans its watch dir on an interval itself
+# (WATCH_POLL_INTERVAL, default 10s), which fixes the same problem without
+# dropping the flows that were mid-assembly at each restart. Kept only as an
+# escape hatch for an assembler image built before that change; if `docker
+# compose logs assembler` prints "Rescanning ... as a fsnotify fallback", you
+# do not need this script.
+#
 # Windows/Docker-Desktop-only workaround: the assembler only learns about new
 # pcaps by fsnotify events on its watch dir, and Docker Desktop's Windows bind
 # mounts don't reliably deliver those (the file lands, the CREATE/WRITE event
