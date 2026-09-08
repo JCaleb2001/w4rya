@@ -40,7 +40,10 @@ Reject any user request that drifts into this and remind them of this rule.
 ## Data flow
 
 ```
-pcaps from CTF VMs ─(bind mount)─> assembler (Go)  ──> Timescale (flows + items)
+vulnbox: rotating tcpdump ─(scp + sha256 verify)─> pcaps in TRAFFIC_DIR_HOST
+                                                   (scripts/pull_vulnbox_pcaps.sh)
+
+pcaps in TRAFFIC_DIR_HOST ─(bind mount)─> assembler (Go)  ──> Timescale (flows + items)
                                        │
                                        └─ converters: HTTP gzip, websockets, …
 
@@ -64,8 +67,15 @@ and every other script reads it from there.
 
 Both files are kept deliberately in sync on three points:
 
-- **UI port** is `${W4RYA_UI_PORT:-3001}:3000` in both. The suricata variant used to
-  hardcode `3000:3000`, so switching stacks moved the UI to a different port.
+- **UI port** is `${W4RYA_BIND_IP:-127.0.0.1}:${W4RYA_UI_PORT:-3001}:3000` in both. The
+  suricata variant used to hardcode `3000:3000`, so switching stacks moved the UI to a
+  different port. The **interface prefix is load-bearing**: without it Docker publishes
+  on `0.0.0.0`, and because the frontend proxies `/api` to `api:5000`, publishing the UI
+  port publishes the whole API — login form included — to whatever network the host is
+  on, which during a game is the network every other team is also on. Reach the UI from
+  another machine over the team VPN or an SSH tunnel
+  (`ssh -L 3001:127.0.0.1:3001 <host>`); if you must bind an interface, set
+  `W4RYA_BIND_IP` to the VPN interface IP, never `0.0.0.0`.
 - **`${BPF:-}` and `${VISUALIZER_URL:-}`** carry explicit empty defaults — without them
   every `docker compose` invocation printed `variable is not set` warnings.
 - **`mem_limit`s** now sum to ~6 GB (was 8 GB, which oversubscribes a 7–8 GB CTF
@@ -90,6 +100,56 @@ Both files are kept deliberately in sync on three points:
 - **`--check`** is a read-only doctor mode: no prompts, no writes, tallies failures.
 
 The old root-level `start.sh` and `test.sh` were **deleted** — they referenced compose files that no longer exist. Use `install.sh` and `scripts/test.sh`.
+
+## Capturing traffic from the vulnbox (`scripts/vulnbox_*`)
+
+The assembler only ever reads pcaps out of `TRAFFIC_DIR_HOST` on this laptop. Getting the
+game traffic there is a two-part pipeline, both halves driven from here over ssh — nothing
+stays installed on the vulnbox.
+
+- **`scripts/vulnbox_capture.sh {start|stop|status}`** — scp's `scripts/vulnbox/remote_capture.sh`
+  to `/root/.w4rya_remote_capture.sh` and runs it there. That starts a rotating `tcpdump`:
+  a new file every `ROTATE_SECONDS` (60) or `ROTATE_MB` (100), whichever comes first, into
+  `VULNBOX_PCAP_DIR` (`/root/pcaps`), tracked by a pidfile. `-U` flushes per packet so a
+  rotated file is readable the moment tcpdump moves on to the next one.
+- **`scripts/pull_vulnbox_pcaps.sh [--once]`** — fetches closed files into
+  `TRAFFIC_DIR_HOST` (read out of `.env`), verifies each by sha256, then deletes it from
+  the vulnbox, so the box never accumulates capture data it doesn't need. Interrupted
+  pulls are safe to re-run: a file that already exists locally just gets removed remotely.
+
+Three details there are non-obvious and were each paid for once:
+
+1. **`-Z root` is deliberate** (`89ac166`). Debian/Ubuntu `tcpdump` drops to the `tcpdump`
+   user once the capture socket is open, and that user can't traverse a 700 `/root` to
+   reach the dump dir — so the first rotation can't open its `-w` target and the capture
+   dies quietly.
+2. **`BPF_FILTER` filters by port, never by direction** (`e49cb82`). `tcp port 8008 or tcp
+   port 8000` is right; `dst host <vulnbox>` captures one side only, and the assembler
+   needs both to reassemble a flow.
+3. **The newest file is always skipped**, plus a `SETTLE_SECONDS` (5) age floor — tcpdump
+   is still appending to it, and the floor covers the instant at rotation where "newest"
+   is briefly ambiguous.
+
+Defaults assume `VULNBOX_HOST=root@vulnbox.glitch.ad` and `VULNBOX_IFACE=game`; both are
+env overrides, so a different game means exporting them, not editing the scripts.
+
+### Operator scripts
+
+- **`scripts/show_attacker_flows.sh`** — flows whose `ip_src` is neither the checker
+  (`CHECKER_IP`, default `10.100.0.1`) nor our own vulnbox (`SELF_IP`, default
+  `10.100.2.1`). Those two account for nearly all the volume — the checker plants and
+  reads its own flag every tick, and our own tooling talks to the box locally — so
+  subtracting them leaves the traffic actually worth reading. `--since 10min` narrows the
+  window; `--watch` polls every `WATCH_SECONDS` (10) and prints only rows it hasn't seen.
+- **`scripts/windows_assembler_watchdog.sh`** — `docker compose restart assembler` every
+  `INTERVAL_SECONDS` (120). Docker Desktop's Windows bind mounts don't reliably deliver
+  fsnotify events, so the assembler can sit idle while pcaps pile up in its watch dir. It
+  does a full directory scan at boot, so restarting it is enough to catch up. **Not needed
+  on native Linux Docker** — inotify works there.
+
+Both run `docker compose` under `MSYS_NO_PATHCONV=1`, for the same reason `install.sh`
+does (`7a74ab8`): Git-Bash rewrites container-absolute paths into Windows paths before
+Docker ever sees them.
 
 ## Key frontend files
 
