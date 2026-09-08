@@ -210,6 +210,44 @@ def add(raw_text: str, enabled: bool = True, sid: Optional[int] = None) -> Rule:
     return rule
 
 
+def add_many(raws: list[str], enabled: bool = True) -> list[Rule]:
+    """Append several rules in one load/save cycle.
+
+    Installing a pack via add() would rewrite the file -- and, with autoreload
+    on, poke Suricata -- once per rule. This does it once.
+
+    A rule whose sid is already in the file is skipped rather than duplicated,
+    which is what makes installing the same pack twice a no-op.
+    """
+    current = load()
+    have = {r.sid for r in current}
+    next_auto = next_sid(current)
+    added: list[Rule] = []
+
+    for raw_text in raws:
+        sid_match = _SID_RE.search(raw_text)
+        if sid_match:
+            sid = int(sid_match.group(1))
+        else:
+            sid = next_auto
+            next_auto += 1
+            raw_text = _inject_sid(raw_text, sid)
+        if sid in have:
+            continue
+        rule = parse_one(raw_text, fallback_sid=sid)
+        if rule is None:
+            raise ValueError(f"could not parse rule with sid {sid}")
+        rule.enabled = enabled
+        rule.sid = sid
+        current.append(rule)
+        have.add(sid)
+        added.append(rule)
+
+    if added:
+        save(current)
+    return added
+
+
 def update_one(sid: int, *, enabled: Optional[bool] = None, raw: Optional[str] = None) -> Optional[Rule]:
     """Patch a single rule by sid. Returns the updated rule or None if absent."""
     current = load()

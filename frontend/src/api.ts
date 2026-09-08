@@ -325,6 +325,23 @@ export const w4ryaApi = createApi({
       query: (body) => ({ url: "/rules", method: "POST", body }),
       invalidatesTags: ["Rules"],
     }),
+    getRulePacks: builder.query<RulePacksPayload, void>({
+      query: () => "/rules/packs",
+      // Same tag as the rules list: installing a pack changes both, and the
+      // installed counts have to move with it.
+      providesTags: ["Rules"],
+    }),
+    installRulePack: builder.mutation<
+      RulePackInstallResult,
+      { id: string; include_noisy?: boolean }
+    >({
+      query: ({ id, ...body }) => ({
+        url: `/rules/packs/${id}`,
+        method: "POST",
+        body,
+      }),
+      invalidatesTags: ["Rules"],
+    }),
     updateRule: builder.mutation<
       Rule,
       { sid: number; raw?: string; enabled?: boolean }
@@ -474,6 +491,38 @@ export interface Rule {
 export interface RuleTemplate {
   name: string;
   raw: string;
+}
+
+export interface RulePackRule {
+  sid: number;
+  name: string;
+  // Becomes a flow tag via `metadata: tag <x>` once the rule fires.
+  tag: string;
+  raw: string;
+  // Matches a shape legitimate traffic also has.
+  noisy?: boolean;
+  installed: boolean;
+}
+
+export interface RulePack {
+  id: string;
+  name: string;
+  description: string;
+  rules: RulePackRule[];
+  installed: number;
+  total: number;
+}
+
+export interface RulePacksPayload {
+  packs: RulePack[];
+}
+
+export interface RulePackInstallResult {
+  pack: string;
+  added: number[];
+  skipped: number;
+  tags: string[];
+  reload?: { ok: boolean; kind?: string };
 }
 
 export interface RulesPayload {
@@ -685,6 +734,8 @@ export const {
   useAttackReplayMutation,
   useGetRulesQuery,
   useAddRuleMutation,
+  useGetRulePacksQuery,
+  useInstallRulePackMutation,
   useUpdateRuleMutation,
   useDeleteRuleMutation,
   useBlockIpMutation,

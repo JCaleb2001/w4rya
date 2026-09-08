@@ -62,6 +62,7 @@ import attack
 import audit
 import notes
 import rate_limit
+import rulepacks
 import rules
 import suricata_ctl
 import user_store
@@ -966,6 +967,60 @@ def list_rules():
             "autoreload": bool(app_config.get("rules_autoreload")),
         },
     })
+
+
+@application.route("/rules/packs")
+def list_rule_packs():
+    """The ready-made rule catalog, annotated with what is already installed.
+
+    Read-only and open to any role, like GET /rules -- knowing which packs
+    exist is not a privileged fact, installing one is.
+    """
+    try:
+        existing = {r.sid for r in rules.load()}
+    except OSError:
+        existing = set()
+    return return_json_response({"packs": rulepacks.catalog(existing)})
+
+
+@application.route("/rules/packs/<pack_id>", methods=["POST"])
+@auth.requires_role("operator")
+def install_rule_pack(pack_id: str):
+    """Install every rule of a pack that isn't already there.
+
+    `include_noisy: false` leaves out the rules flagged as prone to matching
+    legitimate traffic — worth having during a quiet game, worth skipping when
+    the flow list is already full.
+    """
+    pack = rulepacks.find_pack(pack_id)
+    if pack is None:
+        return jsonify({"error": f"unknown pack: {pack_id}"}), 404
+
+    body = request.get_json(silent=True) or {}
+    include_noisy = bool(body.get("include_noisy", True))
+    wanted = [r for r in pack["rules"] if include_noisy or not r.get("noisy")]
+
+    try:
+        added = rules.add_many([r["raw"] for r in wanted])
+    except (ValueError, OSError) as e:
+        return jsonify({"error": str(e)}), 400
+
+    audit.log(
+        auth.current_user() or "?",
+        "rules.pack_install",
+        target=pack_id,
+        details={"added": len(added), "requested": len(wanted)},
+    )
+    result = {
+        "pack": pack_id,
+        "added": [r.sid for r in added],
+        "skipped": len(wanted) - len(added),
+        "tags": sorted({r["tag"] for r in wanted}),
+    }
+    reload = _maybe_autoreload()
+    if reload is not None:
+        result["reload"] = reload
+    return return_json_response(result)
 
 
 @application.route("/rules", methods=["POST"])

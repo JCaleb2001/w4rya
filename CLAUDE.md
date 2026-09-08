@@ -359,6 +359,56 @@ Socket lives on `./suricata-run/` (host) bind-mounted into both api and suricata
 
 **The rules path used to be silently broken.** The api writes to `./suricata-rules` while the suricata container reads `/var/lib/suricata/rules`, which was covered by the `${SURICATA_DIR_HOST}/lib` mount — so every rule created in the UI went to a file suricata never read, with no error anywhere. `docker-compose-suricata.yml` now adds a nested bind `./suricata-rules:/var/lib/suricata/rules`; Docker mounts by ascending path depth, so it wins over the `lib` mount above it. Do **not** "simplify" this into a symlink — a symlink resolves inside the container's namespace and breaks the mapping again.
 
+## Ready-made rule packs (`services/api/rulepacks.py`, `/rules/packs`)
+
+39 Suricata rules for the well-known web attack shapes, in five packs
+(`web-injection`, `web-rce`, `web-traversal`, `recon`, `exfil`). A rule written at
+03:00 while a service is being farmed is a rule written badly; these are meant to be
+installed before the game starts.
+
+**The tags are the point.** Every rule carries `metadata: tag <x>` — the one metadata key
+`cmd/enricher` reads (`alert.metadata.tag`). Without it a rule only ever produces the
+generic `suricata` tag and never becomes a filter chip. Tags auto-register in the `tag`
+table within ~5s of first firing, so nothing else needs wiring. Packs contribute:
+`sqli`, `nosqli`, `xss`, `ssti`, `xxe`, `proto_pollution`, `rce`, `reverse_shell`,
+`deserialization`, `jndi`, `webshell`, `webshell_upload`, `path_traversal`, `lfi`, `rfi`,
+`ssrf`, `recon`, `scanner`, `scripted_client`, `odd_method`, `data_leak`, `app_error`,
+`rce_confirmed`.
+
+Four constraints baked into the catalog, each enforced by a test:
+
+1. **Everything is `alert`, never `drop`.** A misfiring drop takes down our own service,
+   and if it catches the checker we bleed SLA for as long as nobody notices.
+2. **No `$HOME_NET` / `$EXTERNAL_NET` / `$HTTP_PORTS`.** The stack ships Suricata's stock
+   variables — HOME_NET is the RFC1918 default, HTTP_PORTS is only 80 — so a rule using
+   them would silently miss CTF services on odd ports. Rules say `any any -> any any` and
+   rely on http protocol probing.
+3. **Every rule pins its own sid** in a reserved 2,1xx,xxx block, which is what makes
+   installing idempotent: `rules.add_many()` skips sids already in the file.
+4. **`metadata: tag <x>` on every rule** (see above).
+
+Endpoints: `GET /rules/packs` (any role — knowing what exists isn't privileged) returns
+the catalog annotated with what is installed, per rule, so a half-installed pack reports
+honestly. `POST /rules/packs/<id>` (operator, audited as `rules.pack_install`) appends
+what's missing in **one** load/save cycle — installing 12 rules via `add()` would rewrite
+the file and poke Suricata 12 times. `{"include_noisy": false}` leaves out the rules
+flagged as also matching legitimate traffic.
+
+**Two Suricata gotchas** these rules were bitten by, both caught by `suricata -T`:
+
+- A literal `;` inside `pcre:` must be escaped as `\;`. Suricata splits rule options on
+  `;`, so an unescaped one truncates the regex and the whole rule fails to load.
+- The classic `http_uri` / `http_user_agent` / `http_method` modifiers only attach to a
+  preceding `content`. Trailing one after a `pcre` is a **load error**, not a no-op — use
+  the sticky buffer (`http.uri; pcre:"...";`) instead.
+
+To validate a rule change without a UI round trip:
+
+```
+docker compose exec -T suricata sh -c 'cat > /tmp/r.rules' < some.rules
+docker compose exec -T suricata suricata -T -S /tmp/r.rules -l /tmp -v
+```
+
 ## Notes per flow (`/flow/<id>/notes`)
 
 Module `services/api/notes.py`. Table `flow_notes (id uuid pk, flow_id uuid, author text, body text, created_at)`. Author is the session user; only the author can delete their own note. Notes panel rendered below the Meta block in FlowView.
