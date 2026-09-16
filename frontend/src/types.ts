@@ -62,6 +62,12 @@ export interface FlowsQuery {
   port_dst?: number;
   time_from?: string;
   time_to?: string;
+  // Substring match (case-insensitive) against the source pcap's filename.
+  // Bypasses the tick/time filter entirely — useful for a pcap whose own
+  // capture timestamp is way outside the game's tick-0 anchor (a
+  // historical/test pcap loaded for detection testing, say), where no time
+  // window will surface it without knowing that offset in advance.
+  pcap_name?: string;
   tags_include?: string[];
   tags_exclude?: string[];
   tag_intersection_mode?: "AND" | "OR";

@@ -289,6 +289,11 @@ export function Header() {
           Attacks
         </div>
       </Link>
+      <Link to="/killchain">
+        <div className="hax-btn" title="attacker activity grouped as a MITRE-ish kill chain">
+          Kill Chain
+        </div>
+      </Link>
       <Link to="/warroom">
         <div className="hax-btn" title="fullscreen TV mode">
           War room
@@ -302,6 +307,11 @@ export function Header() {
       <Link to="/rules">
         <div className="hax-btn">
           Rules
+        </div>
+      </Link>
+      <Link to="/exploits">
+        <div className="hax-btn" title="saved exploit library — replay against every team, repeatedly">
+          Exploits
         </div>
       </Link>
       {hasRole(useGetMeQuery().data?.role, "admin") && (

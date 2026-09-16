@@ -26,10 +26,12 @@ import { useCopy } from "../hooks/useCopy";
 import { RadioGroup } from "../components/RadioGroup";
 import { ExploitModal } from "../components/ExploitModal";
 import { NotesPanel } from "../components/NotesPanel";
+import { DecodedPayloadsPanel } from "../components/DecodedPayloadsPanel";
 import { useBlockIpMutation, useCanRole } from "../api";
 import {
   useGetFlowQuery,
   useGetServicesQuery,
+  useLazyGetAttackExploitCodeQuery,
   useLazyToFullPythonRequestQuery,
   useLazyToPwnToolsQuery,
   useToSinglePythonRequestQuery,
@@ -578,6 +580,45 @@ export function FlowView() {
     },
   });
 
+  // "📋 Copy Exploit" — the one-click version: isolates just the request
+  // that matched the firing rule (see attack.find_exploit_item server-side)
+  // instead of every request in the whole captured session.
+  const [triggerExploitCodeQuery] = useLazyGetAttackExploitCodeQuery();
+  const [exploitCodeMeta, setExploitCodeMeta] = useState<{
+    basis: "single_item" | "matched_items" | "full_flow";
+    protocol: "http" | "raw";
+    client_ordinal: number | null;
+    matched_ordinals: number[] | null;
+    client_item_count: number;
+  } | null>(null);
+
+  async function copyAsExploit() {
+    if (flow?.id) {
+      const { data } = await triggerExploitCodeQuery({ flow_id: flow.id });
+      if (data) {
+        setExploitCodeMeta({
+          basis: data.basis,
+          protocol: data.protocol,
+          client_ordinal: data.client_ordinal,
+          matched_ordinals: data.matched_ordinals,
+          client_item_count: data.client_item_count,
+        });
+        return data.code;
+      }
+    }
+    return "";
+  }
+
+  const { statusText: exploitCopyStatusText, copy: copyExploit } = useCopy({
+    getText: copyAsExploit,
+    copyStateToText: {
+      copied: "✓ Copied",
+      default: "📋 Copy Exploit",
+      failed: "! failed",
+      copying: "isolating…",
+    },
+  });
+
   // TODO: account for user scrolling - update currentFlow accordingly
   const [currentFlow, setCurrentFlow] = useState<number>(-1);
   const [exploitOpen, setExploitOpen] = useState(false);
@@ -716,6 +757,26 @@ export function FlowView() {
           >
             <LightningBoltIcon className="h-4 w-4"></LightningBoltIcon>
           </button> : undefined}
+          <div className="flex flex-col items-start">
+            <button
+              className="hax-btn hax-btn-primary bg-hax-accent-deep/30 border-hax-accent text-hax-accent-bright hax-glow"
+              onClick={copyExploit}
+              title="isolates just the request that matched the firing rule and copies it as ready-to-paste Python"
+            >
+              {exploitCopyStatusText}
+            </button>
+            {exploitCodeMeta && (
+              <span className="text-[9px] text-hax-dim mt-0.5">
+                {exploitCodeMeta.basis === "single_item"
+                  ? `isolated request ${exploitCodeMeta.client_ordinal} of ${exploitCodeMeta.client_item_count}`
+                  : exploitCodeMeta.basis === "matched_items"
+                  ? `isolated requests ${exploitCodeMeta.matched_ordinals?.join(", ")} of ${exploitCodeMeta.client_item_count} (multi-stage match)`
+                  : `couldn't isolate — full session (${exploitCodeMeta.client_item_count} requests)`}
+                {exploitCodeMeta.protocol === "raw" && " · raw TCP (not HTTP)"}
+              </span>
+            )}
+          </div>
+
           <button
             className="hax-btn hax-btn-primary"
             onClick={copyPwn}
@@ -726,6 +787,7 @@ export function FlowView() {
           <button
             className="hax-btn hax-btn-primary"
             onClick={copyRequests}
+            title="every client request in this flow, unfiltered"
           >
             {requestsCopyStatusText}
           </button>
@@ -739,6 +801,7 @@ export function FlowView() {
       )}
 
       {flow ? <FlowOverview flow={flow}></FlowOverview> : undefined}
+      {flow && <DecodedPayloadsPanel flowId={flow.id} />}
       {flow && <NotesPanel flowId={flow.id} />}
       {flow?.flow[(reprId < flow?.flow.length) ? reprId : 0].flow.map((flow_data, i, a) => {
         const delta_time = a[i].time - (a[i - 1]?.time ?? a[i].time);
