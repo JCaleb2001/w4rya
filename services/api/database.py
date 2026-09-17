@@ -411,7 +411,7 @@ class Connection(psycopg.Connection):
             WHERE (jsonb_array_length(signatures) > 0 OR tags ? 'flag-out')
               AND id > fid_pack_low(%(t0)s)
               AND id < fid_pack_high(%(t1)s)
-              AND NOT (host(ip_src) = ANY(%(exclude_ips)s))
+              AND NOT (host(ip_src) = ANY(%(exclude_ips)s::text[]))
             ORDER BY time DESC
             LIMIT %(limit)s
         """

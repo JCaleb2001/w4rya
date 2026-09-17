@@ -970,3 +970,15 @@ def test_locate_vulnerable_input_truncates_long_values():
     results = attack.locate_vulnerable_input(data, clauses)
     assert len(results[0]["value"]) <= 301  # 300 chars + the truncation marker
     assert results[0]["value"].endswith("…")
+
+
+def test_attack_timeline_exclude_ips_array_is_type_cast():
+    """`ANY(%(exclude_ips)s)` with no cast makes psycopg send an untyped param;
+    Postgres can't infer the element type of an *empty* array and raises
+    IndeterminateDatatype — which is exactly what exclude_ips is by default,
+    before any checker IP has been confirmed. No live DB in this suite, so
+    this only guards the SQL text itself against losing the cast again."""
+    import inspect
+    import database
+    src = inspect.getsource(database.Connection.attack_timeline)
+    assert "ANY(%(exclude_ips)s::text[])" in src
