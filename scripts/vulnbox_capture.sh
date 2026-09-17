@@ -35,4 +35,9 @@ case "$CMD" in
 esac
 
 scp -q "$(dirname "${BASH_SOURCE[0]}")/vulnbox/remote_capture.sh" "$HOST:$REMOTE_SCRIPT_PATH"
-ssh "$HOST" "bash '$REMOTE_SCRIPT_PATH' '$CMD' '$IFACE' '$REMOTE_DIR' '$ROTATE_SECONDS' '$ROTATE_MB' '$BPF_FILTER'"
+# printf %q shell-quotes each argument individually — a naive
+# '$VAR'-per-argument string breaks (or worse, splits into extra remote
+# shell arguments) if BPF_FILTER or any other override contains a single
+# quote.
+REMOTE_CMD=$(printf '%q ' bash "$REMOTE_SCRIPT_PATH" "$CMD" "$IFACE" "$REMOTE_DIR" "$ROTATE_SECONDS" "$ROTATE_MB" "$BPF_FILTER")
+ssh "$HOST" "$REMOTE_CMD"
