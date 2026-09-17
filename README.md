@@ -19,6 +19,14 @@ See [CHANGELOG.md](./CHANGELOG.md) for what changed in each release.
 - **Checker detection** — ranks IPs by how checker-like their traffic looks, so the checker's own SLA traffic doesn't get mistaken for an attacker's.
 - **Attack timeline, Kill Chain view, per-service stats, flag-leak alarm, per-flow notes, decoded-payloads panel, audit log, and a fullscreen war-room view.**
 
+## Screenshots
+
+| | |
+|---|---|
+| ![Flow list with live Suricata tags](demo_images/flow-list.jpg) Flow list, filtered by tag, with live Suricata matches | ![Incident Packet](demo_images/incident-packet.jpg) Incident Packet — endpoint, technique, and remediation for a matched flow |
+| ![Checker candidate detection](demo_images/checker-detection.jpg) Checker candidate ranking in `/config` → Checker | ![Rule packs installed](demo_images/rule-packs.jpg) Suricata rules, with rule packs installed from `/rules` |
+| ![Saved exploit library](demo_images/exploit-library.jpg) Saved exploit library — replay against any target later | |
+
 ## No-AI policy
 
 **This tool must not call any AI / LLM service at runtime.** The Attack / Defense CTF competitions this fork is built for prohibit the use of AI during the game. All in-tool classification, tagging, and decision-making stays deterministic — regex, Suricata signatures, statistical heuristics, etc. AI is fine for *developing* this tool; it must not be embedded in *running* it.
