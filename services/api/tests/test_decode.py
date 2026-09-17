@@ -62,6 +62,25 @@ def test_plain_text_with_no_encoding_yields_no_layers():
     assert layers == []
 
 
+def test_gzip_decompression_bomb_is_bounded_not_exhausted():
+    import decode
+    # A small, highly-compressible blob that would expand far past
+    # MAX_DECOMPRESSED if let run to completion — this must come back
+    # capped (or rejected), never a multi-hundred-MB allocation.
+    bomb = gzip.compress(b"\x00" * (decode.MAX_DECOMPRESSED * 4))
+    assert len(bomb) < 1_000_000
+    out = decode.try_gzip(bomb)
+    assert out is None or len(out) <= decode.MAX_DECOMPRESSED
+
+
+def test_deflate_decompression_bomb_is_bounded_not_exhausted():
+    import decode
+    bomb = zlib.compress(b"\x00" * (decode.MAX_DECOMPRESSED * 4))
+    assert len(bomb) < 1_000_000
+    out = decode.try_deflate(bomb)
+    assert out is None or len(out) <= decode.MAX_DECOMPRESSED
+
+
 def test_binary_non_texty_data_is_not_falsely_decoded():
     """Random binary bytes that happen to be valid base64 alphabet but
     decode to garbage must not be reported as a successful decode."""
