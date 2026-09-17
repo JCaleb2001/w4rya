@@ -25,6 +25,10 @@ HOST="${VULNBOX_HOST:-root@vulnbox.glitch.ad}"
 REMOTE_DIR="${VULNBOX_PCAP_DIR:-/root/pcaps}"
 POLL_SECONDS="${POLL_SECONDS:-30}"
 SETTLE_SECONDS="${SETTLE_SECONDS:-5}"
+# Shell-quoted once up front (same reasoning as vulnbox_capture.sh's
+# REMOTE_CMD): a naive '$REMOTE_DIR' embedded in a remote command string
+# breaks (or injects) if the value contains a single quote.
+REMOTE_DIR_Q="$(printf '%q' "$REMOTE_DIR")"
 
 # Same key=value reader install.sh (env_get) and smoke.sh use — gsub only
 # strips a quote at the very start/end of the value, not every embedded
@@ -47,7 +51,7 @@ log() { printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"; }
 
 pull_once() {
   local files
-  files="$(ssh "$HOST" "cd '$REMOTE_DIR' 2>/dev/null && find . -maxdepth 1 -name '*.pcap*' -printf '%T@ %f\n' 2>/dev/null | sort -rn" || true)"
+  files="$(ssh "$HOST" "cd $REMOTE_DIR_Q 2>/dev/null && find . -maxdepth 1 -name '*.pcap*' -printf '%T@ %f\n' 2>/dev/null | sort -rn" || true)"
   if [[ -z "$files" ]]; then
     log "no pcaps on vulnbox"
     return 0
@@ -84,7 +88,7 @@ pull_once() {
     local final="$LOCAL_DIR/$name"
     if [[ -f "$final" ]]; then
       # already pulled — a previous pass must have died before the remote rm
-      ssh "$HOST" "rm -f '$REMOTE_DIR/$name'" || true
+      ssh "$HOST" "rm -f $(printf '%q' "$REMOTE_DIR/$name")" || true
       continue
     fi
 
@@ -101,7 +105,7 @@ pull_once() {
     quoted_names+="$(printf '%q ' "$name")"
   done
   local remote_sums
-  remote_sums="$(ssh "$HOST" "cd '$REMOTE_DIR' 2>/dev/null && sha256sum -- $quoted_names 2>/dev/null" || true)"
+  remote_sums="$(ssh "$HOST" "cd $REMOTE_DIR_Q 2>/dev/null && sha256sum -- $quoted_names 2>/dev/null" || true)"
 
   local tmp final remote_sum local_sum
   for name in "${candidates[@]}"; do
@@ -126,7 +130,7 @@ pull_once() {
     fi
 
     mv "$tmp" "$final"
-    ssh "$HOST" "rm -f '$REMOTE_DIR/$name'" || true
+    ssh "$HOST" "rm -f $(printf '%q' "$REMOTE_DIR/$name")" || true
     log "pulled + verified + removed from vulnbox: $name"
   done
 }
