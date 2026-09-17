@@ -14,10 +14,29 @@ from __future__ import annotations
 import json
 import os
 import socket as _socket
+import time as _time
 from typing import Any
+
+try:
+    import fcntl  # POSIX only — the api container always runs on Linux;
+    # a Windows dev/test environment (no fcntl) falls back to unlocked
+    # reload_rules() below, which is fine there since it has no real
+    # Suricata socket to coordinate access to anyway.
+except ImportError:
+    fcntl = None
 
 SOCKET_PATH = os.environ.get(
     "W4RYA_SURICATA_SOCKET", "/var/run/suricata/suricata-command.socket"
+)
+# Cross-process coordination for reload_rules() — see its docstring. All
+# gunicorn workers share the same container filesystem, so a plain file
+# lock (not a threading.Lock, which wouldn't cross worker *processes*) is
+# enough.
+_RELOAD_LOCK_PATH = os.environ.get(
+    "W4RYA_SURICATA_RELOAD_LOCK", "/tmp/w4rya-suricata-reload.lock"
+)
+_RELOAD_STATE_PATH = os.environ.get(
+    "W4RYA_SURICATA_RELOAD_STATE", "/tmp/w4rya-suricata-reload.state"
 )
 # `reload-rules` has to recompile the whole multi-pattern matcher, so its
 # cost scales with ruleset size, not request size — 1.5s (fine for `uptime`,
@@ -76,9 +95,53 @@ def _send_command(cmd: dict, timeout: float = DEFAULT_TIMEOUT) -> dict:
             pass
 
 
+def _read_reload_state() -> dict:
+    try:
+        with open(_RELOAD_STATE_PATH, "r") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
+def _write_reload_state(state: dict) -> None:
+    tmp = f"{_RELOAD_STATE_PATH}.tmp"
+    with open(tmp, "w") as f:
+        json.dump(state, f)
+    os.replace(tmp, _RELOAD_STATE_PATH)
+
+
 def reload_rules() -> dict:
-    """Ask Suricata to re-read the rules file. Returns the raw response dict."""
-    return _send_command({"command": "reload-rules"})
+    """Ask Suricata to re-read the rules file. Returns the raw response dict.
+
+    Coalesces concurrent callers: a reload against a large ruleset (~40k
+    active ET Open rules) can take several seconds, and several gunicorn
+    workers — separate OS processes, so an in-process threading.Lock
+    wouldn't help — can each try to trigger one within the same few
+    seconds (e.g. two operators saving rule edits back to back). Left
+    uncoordinated, every worker independently blocks on its own socket
+    call, which with only a handful of sync workers can occupy the whole
+    pool. A file lock (shared by all workers via the container's
+    filesystem) serializes the actual socket calls; a caller that starts
+    waiting for the lock AFTER another reload already began skips
+    triggering a second one and reuses that one's result instead, since a
+    reload that completed after this call started already covers whatever
+    rule state prompted it.
+    """
+    if fcntl is None:
+        return _send_command({"command": "reload-rules"})
+    requested_at = _time.time()
+    lock_fd = os.open(_RELOAD_LOCK_PATH, os.O_CREAT | os.O_RDWR, 0o666)
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        state = _read_reload_state()
+        if state.get("completed_at", 0) >= requested_at:
+            return state.get("result", {"return": "OK", "message": "coalesced"})
+        result = _send_command({"command": "reload-rules"})
+        _write_reload_state({"completed_at": _time.time(), "result": result})
+        return result
+    finally:
+        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        os.close(lock_fd)
 
 
 def uptime() -> dict:

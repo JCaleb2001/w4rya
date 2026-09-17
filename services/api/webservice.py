@@ -1589,7 +1589,10 @@ def getFlowDecoded(id):
     recursively) — saves the monitoring team a manual round-trip through
     CyberChef for the common case. Items with nothing decodable are omitted
     rather than returned with an empty layer list."""
-    id = uuid.UUID(id)
+    try:
+        id = uuid.UUID(id)
+    except ValueError:
+        return jsonify({"error": "invalid id"}), 400
     with db.connection() as c:
         flow = c.flow_detail(id)
     if not flow:
