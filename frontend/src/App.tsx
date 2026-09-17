@@ -21,11 +21,14 @@ import { Users } from "./pages/Users";
 import { Config } from "./pages/Config";
 import { Rules } from "./pages/Rules";
 import { Attacks } from "./pages/Attacks";
+import { KillChain } from "./pages/KillChain";
+import { Exploits } from "./pages/Exploits";
 import { Audit } from "./pages/Audit";
 import { Warroom } from "./pages/Warroom";
 import { useGetMeQuery, useGetSetupStatusQuery } from "./api";
 import { Toasts } from "./components/Toasts";
 import { FlagLeakWatcher } from "./components/FlagLeakWatcher";
+import { AttackAlertWatcher } from "./components/AttackAlertWatcher";
 
 function SessionSplash({ label }: { label: string }) {
   return (
@@ -134,6 +137,22 @@ function App() {
             }
           />
           <Route
+            path="killchain"
+            element={
+              <Suspense>
+                <KillChain />
+              </Suspense>
+            }
+          />
+          <Route
+            path="exploits"
+            element={
+              <Suspense>
+                <Exploits />
+              </Suspense>
+            }
+          />
+          <Route
             path="audit"
             element={
               <Suspense>
@@ -174,6 +193,7 @@ function Layout() {
       </main>
       <footer className="footer-area"></footer>
       <FlagLeakWatcher />
+      <AttackAlertWatcher />
       <Toasts />
     </div>
   );

@@ -65,7 +65,7 @@ services:
       # and ro on the suricata container below (reads).
       - ./suricata-rules:/app/suricata-rules
       # suricata command socket directory (B1 auto-reload).
-      - ./suricata-run:/var/run/suricata
+      - suricata-run:/var/run/suricata
     environment:
       TIMESCALE: ${TIMESCALE}
       W4RYA_TRAFFIC_DIR: ${TRAFFIC_DIR_DOCKER}
@@ -177,7 +177,7 @@ services:
       - ./suricata-rules:/var/lib/suricata/rules
       # Shared with api: suricata writes the command socket here, api connects
       # to it to trigger reload-rules without docker.sock or PID sharing.
-      - ./suricata-run:/var/run/suricata
+      - suricata-run:/var/run/suricata
     environment:
       # --set unix-command.enabled=yes turns on the JSON command socket at
       # /var/run/suricata/suricata-command.socket regardless of runmode.
@@ -185,6 +185,12 @@ services:
 
 volumes:
   timescale-data:
+  # Named volume, not a host bind mount: Unix domain sockets can't be
+  # created on Docker Desktop's Windows bind-mount file sharing (bind()
+  # fails with EIO). A named volume lives inside the Linux VM, so the
+  # suricata-command.socket works, and it's still shared rw between
+  # suricata and api the same way the bind mount was.
+  suricata-run:
 
 networks:
   internal:

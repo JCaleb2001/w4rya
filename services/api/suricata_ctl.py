@@ -19,7 +19,16 @@ from typing import Any
 SOCKET_PATH = os.environ.get(
     "W4RYA_SURICATA_SOCKET", "/var/run/suricata/suricata-command.socket"
 )
-DEFAULT_TIMEOUT = 1.5
+# `reload-rules` has to recompile the whole multi-pattern matcher, so its
+# cost scales with ruleset size, not request size — 1.5s (fine for `uptime`,
+# a handful of custom rules) was found to always time out once the ET Open
+# set is loaded: a real reload against ~40k active rules took ~8.5s wall
+# clock (Suricata's own log confirmed "rule reload complete" well after the
+# client had already given up and closed the socket, which Suricata then
+# logged as a broken pipe trying to write the response). 20s leaves
+# headroom for slower hardware/an even larger ruleset while staying well
+# under gunicorn's 60s worker timeout.
+DEFAULT_TIMEOUT = 20.0
 
 
 def _read_line(sock: _socket.socket) -> bytes:

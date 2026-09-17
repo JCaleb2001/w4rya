@@ -6,6 +6,9 @@ import {
   useUpdateConfigServicesMutation,
   useGetConfigTeamsQuery,
   useUpdateConfigTeamsMutation,
+  useGetConfigCheckerIpsQuery,
+  useUpdateConfigCheckerIpsMutation,
+  useGetCheckerCandidatesQuery,
   useCanRole,
   useMyRole,
   GameConfig,
@@ -13,7 +16,7 @@ import {
 } from "../api";
 import { Service } from "../types";
 
-const TABS = ["game", "services", "teams"] as const;
+const TABS = ["game", "services", "teams", "checker"] as const;
 type Tab = (typeof TABS)[number];
 
 export function Config() {
@@ -48,6 +51,7 @@ export function Config() {
       {tab === "game" && <GameForm canEdit={canEdit} />}
       {tab === "services" && <ServicesEditor canEdit={canEdit} />}
       {tab === "teams" && <TeamsEditor canEdit={canEdit} />}
+      {tab === "checker" && <CheckerEditor canEdit={canEdit} />}
     </div>
   );
 }
@@ -376,6 +380,121 @@ function TeamsEditor({ canEdit }: { canEdit: boolean }) {
       >
         {saving ? "saving…" : "save →"}
       </button>
+    </div>
+  );
+}
+
+function CheckerEditor({ canEdit }: { canEdit: boolean }) {
+  const { data: confirmed, isLoading } = useGetConfigCheckerIpsQuery();
+  const { data: suggestions, isFetching: suggesting } = useGetCheckerCandidatesQuery({
+    from_tick: -100000, to_tick: 100000,
+  });
+  const [update, { isLoading: saving, error, isSuccess }] = useUpdateConfigCheckerIpsMutation();
+
+  if (isLoading) return <Loading />;
+  const list = confirmed ?? [];
+
+  async function confirmIp(ip: string) {
+    if (list.includes(ip)) return;
+    try {
+      await update([...list, ip]).unwrap();
+    } catch {}
+  }
+  async function removeIp(ip: string) {
+    try {
+      await update(list.filter((x) => x !== ip)).unwrap();
+    } catch {}
+  }
+
+  const candidates = (suggestions?.candidates ?? []).filter((c) => !list.includes(c.ip));
+
+  return (
+    <div className="max-w-3xl flex flex-col gap-4">
+      <div className="bg-hax-surface border border-hax-border rounded-sm p-6 flex flex-col gap-3">
+        <div className="text-xs uppercase tracking-[0.25em] text-hax-muted">
+          ▎confirmed checker / gameserver ips
+        </div>
+        <span className="text-[10px] text-hax-dim normal-case">
+          traffic from these ips is excluded from /attacks and the kill-chain view.
+          never added automatically — you confirm each one below.
+        </span>
+        {list.length === 0 && (
+          <div className="text-hax-dim text-xs">none confirmed yet</div>
+        )}
+        <div className="flex flex-wrap gap-2">
+          {list.map((ip) => (
+            <span
+              key={ip}
+              className="flex items-center gap-2 px-2 py-1 rounded-sm border border-hax-border bg-hax-elev text-xs"
+            >
+              {ip}
+              {canEdit && (
+                <button
+                  onClick={() => removeIp(ip)}
+                  className="text-hax-danger text-[10px] uppercase tracking-wider hover:hax-glow"
+                >
+                  ✕
+                </button>
+              )}
+            </span>
+          ))}
+        </div>
+        <ErrorOrSuccess error={error} ok={isSuccess && !saving} />
+      </div>
+
+      <div className="bg-hax-surface border border-hax-border rounded-sm p-6 flex flex-col gap-3">
+        <div className="text-xs uppercase tracking-[0.25em] text-hax-muted">
+          ▎candidates {suggesting && <span className="text-hax-accent-bright">⟳</span>}
+        </div>
+        <span className="text-[10px] text-hax-dim normal-case">
+          ranked by how checker-like the traffic looks — regular per-tick cadence, hits
+          most/all services, never trips an exploit signature. NOT based on User-Agent
+          (a real attacker's exploit script often looks the same). Review before confirming.
+        </span>
+        {candidates.length === 0 && (
+          <div className="text-hax-dim text-xs">no candidates above the noise floor yet</div>
+        )}
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="text-hax-muted uppercase tracking-wider text-[10px]">
+              <th className="text-left py-1 pr-2">ip</th>
+              <th className="text-right py-1 pr-2">confidence</th>
+              <th className="text-right py-1 pr-2">regularity</th>
+              <th className="text-right py-1 pr-2">coverage</th>
+              <th className="text-right py-1 pr-2">clean rate</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            {candidates.map((c) => (
+              <tr key={c.ip} className="border-t border-hax-border">
+                <td className="py-1 pr-2 text-hax-text">{c.ip}</td>
+                <td className="py-1 pr-2 text-right text-hax-accent-bright">
+                  {(c.confidence * 100).toFixed(0)}%
+                </td>
+                <td className="py-1 pr-2 text-right text-hax-muted">
+                  {c.evidence.interval_regularity === null
+                    ? "—"
+                    : `${(c.evidence.interval_regularity * 100).toFixed(0)}%`}
+                </td>
+                <td className="py-1 pr-2 text-right text-hax-muted">
+                  {c.evidence.services_touched}/{c.evidence.services_total}
+                </td>
+                <td className="py-1 pr-2 text-right text-hax-muted">
+                  {(c.evidence.clean_signature_rate * 100).toFixed(0)}%
+                </td>
+                <td className="py-1 text-right">
+                  {canEdit && (
+                    <button onClick={() => confirmIp(c.ip)} className="hax-btn text-[10px]">
+                      confirm as checker
+                    </button>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
