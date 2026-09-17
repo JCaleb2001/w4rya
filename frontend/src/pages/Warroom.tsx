@@ -2,9 +2,11 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import {
   AttackEvent,
+  PipelineHealth,
   ServiceStats,
   useGetAttacksQuery,
   useGetMeQuery,
+  useGetPipelineHealthQuery,
   useGetServicesStatsQuery,
   useGetTickInfoQuery,
   useVisibilityAwarePolling,
@@ -28,6 +30,9 @@ export function Warroom() {
     { pollingInterval: pollMs }
   );
   const { data: tick } = useGetTickInfoQuery();
+  const { data: pipeline } = useGetPipelineHealthQuery(undefined, {
+    pollingInterval: pollMs,
+  });
 
   const [now, setNow] = useState(new Date());
   useEffect(() => {
@@ -55,7 +60,14 @@ export function Warroom() {
         progress={tickProgressPct}
         eventCount={attacks?.count ?? 0}
         leakCount={leaks.length}
+        pipeline={pipeline}
       />
+
+      {/* Only shown when something is wrong. A wall display that always
+          carries a status bar teaches people to ignore it. */}
+      {pipeline && pipeline.status !== "ok" && (
+        <PipelineBanner health={pipeline} />
+      )}
 
       <div className="flex-1 grid grid-cols-2 grid-rows-2 gap-4 min-h-0">
         <Panel title="services" sub={`last 5 ticks`}>
@@ -100,18 +112,63 @@ function computeTickProgressPct(
   return Math.floor(((ms % Number(tick.tickLength)) / Number(tick.tickLength)) * 100);
 }
 
+/** Colour + wording for one pipeline status. Kept in one place because the
+ *  banner and the top-bar counter have to agree. */
+function pipelineLook(status: PipelineHealth["status"]) {
+  switch (status) {
+    case "ok":
+      return { label: "flowing", cls: "text-hax-accent-bright", danger: false };
+    case "lagging":
+      return { label: "lagging", cls: "text-hax-warning", danger: false };
+    case "stalled":
+      return { label: "stalled", cls: "text-hax-danger", danger: true };
+    default:
+      return { label: "idle", cls: "text-hax-muted", danger: false };
+  }
+}
+
+function formatLag(seconds: number | null): string {
+  if (seconds === null) return "--";
+  if (seconds < 90) return `${Math.round(seconds)}s`;
+  if (seconds < 5400) return `${Math.round(seconds / 60)}m`;
+  return `${Math.round(seconds / 3600)}h`;
+}
+
+function PipelineBanner({ health }: { health: PipelineHealth }) {
+  const look = pipelineLook(health.status);
+  return (
+    <div
+      className={`bg-hax-surface border rounded-sm px-6 py-2 flex items-center gap-4 text-sm ${
+        look.danger ? "border-hax-danger" : "border-hax-border"
+      }`}
+    >
+      <span className={`uppercase tracking-[0.25em] font-bold ${look.cls}`}>
+        ingest {look.label}
+      </span>
+      <span className="text-hax-muted">{health.detail}</span>
+      {health.pcaps.readable && (
+        <span className="ml-auto text-hax-dim text-xs">
+          {health.pcaps.ingested} ingested / {health.pcaps.on_disk} on disk
+        </span>
+      )}
+    </div>
+  );
+}
+
 function TopBar({
   now,
   currentTick,
   progress,
   eventCount,
   leakCount,
+  pipeline,
 }: {
   now: Date;
   currentTick: number;
   progress: number;
   eventCount: number;
   leakCount: number;
+  pipeline?: PipelineHealth;
 }) {
   return (
     <div
@@ -155,6 +212,14 @@ function TopBar({
         }
       />
       <Big label="events" value={String(eventCount)} />
+      {/* Ingest lag sits next to the tick because that is the comparison that
+          matters: traffic older than a tick or two means the wall is showing
+          a game that has already moved on. */}
+      <Big
+        label="ingest lag"
+        value={pipeline ? formatLag(pipeline.lag_seconds) : "--"}
+        danger={pipeline ? pipeline.status === "stalled" : false}
+      />
       <Big
         label="leaks"
         value={String(leakCount)}

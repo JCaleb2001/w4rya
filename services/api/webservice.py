@@ -54,6 +54,7 @@ from flask_cors import CORS
 from flask import request
 
 from flow2pwn import flow2pwn
+import configurations
 import database, json_util
 import auth
 import app_config
@@ -63,6 +64,7 @@ import decode
 import exploits
 import notes
 import rate_limit
+import rulepacks
 import rules
 import suricata_ctl
 import technique_map
@@ -389,6 +391,21 @@ def query():
             tags_include=[str(elem) for elem in query.get("tags_include", [])],
             tags_exclude=[str(elem) for elem in query.get("tags_exclude", [])],
             tag_intersection_and=query.get("tag_intersection_mode", "").lower() == "and",
+            # The checker and our own tooling account for nearly all the
+            # volume; hiding them is what leaves the traffic worth reading.
+            # Resolved server-side so the frontend never has to know which ips
+            # count as noise. Confirmed checker_ips (set via the Checker tab's
+            # candidate-suggestion flow, see /checker/candidates) is folded in
+            # here too, so confirming a checker there also hides it from the
+            # flow list — an operator shouldn't have to enter the same IP
+            # twice in two unrelated config fields to get consistent
+            # "not an attacker" treatment everywhere.
+            ip_src_exclude=(
+                app_config.parse_noise_ips(app_config.get("noise_ips"))
+                + [ip_network(ip, strict=False) for ip in (app_config.get("checker_ips") or [])]
+                if query.get("hide_noise")
+                else []
+            ),
             pcap_name=(str(query["pcap_name"]).strip() or None) if query.get("pcap_name") else None,
         )
     except re.error as error:
@@ -632,6 +649,110 @@ def get_services_stats():
         "tick_length_ms": tick_length_ms,
         "from": time_start.isoformat(),
         "services": rows,
+    })
+
+
+# How many ticks without a newer flow before the pipeline is called lagging.
+# Two is deliberate: one tick of slack covers the normal rotate-then-pull
+# round trip, so a single slow cycle doesn't cry wolf mid-game.
+PIPELINE_STALE_TICKS = 2
+# Bound for the "newest flow" lookup. Older than this and the answer is simply
+# "nothing recent", which is the useful answer anyway -- and it keeps the query
+# off the full flow table.
+PIPELINE_HORIZON = timedelta(days=1)
+
+
+def _pcap_dir_state(ingested: set[str]) -> dict:
+    """Compare the pcaps on disk with the ones the assembler has recorded.
+
+    The api mounts the capture directory read-only, but tolerate it not being
+    there: an api container started before that mount existed should degrade to
+    "unknown", not 500.
+    """
+    state = {
+        "dir": str(configurations.traffic_dir),
+        "readable": False,
+        "on_disk": None,
+        "pending": None,
+        "newest_on_disk": None,
+    }
+    try:
+        names = sorted(
+            f.name for f in configurations.traffic_dir.iterdir()
+            if f.is_file() and f.suffix.startswith(".pcap")
+        )
+    except OSError:
+        return state
+
+    state["readable"] = True
+    state["on_disk"] = len(names)
+    state["newest_on_disk"] = names[-1] if names else None
+    # The newest file is normally still being written by tcpdump, so it is
+    # expected to be un-ingested; counting it as pending would leave the panel
+    # permanently showing 1.
+    state["pending"] = len([n for n in names if n not in ingested])
+    return state
+
+
+@application.route("/pipeline/health")
+def pipeline_health():
+    """Is traffic actually flowing from the vulnbox into the flow table?
+
+    "Why am I not seeing traffic?" is the most expensive question during a
+    game, and answering it by hand means checking the capture, the pull loop,
+    the assembler and the database in turn. This is that check as one call.
+    """
+    tick_length_ms = int(app_config.get("tick_length") or 180000)
+    now = datetime.now(tz=timezone.utc)
+    tick_start = now - timedelta(milliseconds=tick_length_ms)
+
+    with db.connection() as c:
+        health = c.pipeline_health(
+            tick_start=tick_start,
+            hour_start=now - timedelta(hours=1),
+            horizon=now - PIPELINE_HORIZON,
+        )
+        ingested = c.ingested_pcap_names()
+
+    pcaps = _pcap_dir_state(set(ingested))
+    pcaps["ingested"] = len(ingested)
+
+    last_flow_time = health["last_flow_time"]
+    lag_seconds = (now - last_flow_time).total_seconds() if last_flow_time else None
+
+    stale_after = max(PIPELINE_STALE_TICKS * tick_length_ms / 1000.0, 60.0)
+    if lag_seconds is None:
+        status = "idle"
+        detail = "no flows in the last day — has the assembler ever ingested anything?"
+    elif lag_seconds > stale_after:
+        status = "stalled" if pcaps["pending"] else "lagging"
+        if status == "stalled":
+            detail = (
+                f"{pcaps['pending']} pcap(s) on disk are not in the flow table and the "
+                f"newest flow is {int(lag_seconds)}s old — check: docker compose logs assembler"
+            )
+        else:
+            detail = (
+                f"newest flow is {int(lag_seconds)}s old and nothing is waiting on disk — "
+                "check the capture and the pull loop on the vulnbox"
+            )
+    else:
+        status = "ok"
+        detail = f"newest flow is {int(lag_seconds)}s old"
+
+    return return_json_response({
+        "now": now,
+        "status": status,
+        "detail": detail,
+        "lag_seconds": lag_seconds,
+        "stale_after_seconds": stale_after,
+        "last_flow_time": last_flow_time,
+        "flows": {
+            "last_tick": health["flows_last_tick"],
+            "last_hour": health["flows_last_hour"],
+        },
+        "pcaps": pcaps,
+        "tick_length_ms": tick_length_ms,
     })
 
 
@@ -1427,7 +1548,7 @@ def _maybe_autoreload() -> dict | None:
     if not app_config.get_fresh("rules_autoreload"):
         return None
     try:
-        return suricata_ctl.reload_rules()
+        return suricata_ctl.reload_rules(blocking=False)
     except FileNotFoundError as e:
         return {"error": str(e), "kind": "socket_missing"}
     except (OSError, ValueError) as e:
@@ -1449,6 +1570,60 @@ def list_rules():
             "autoreload": bool(app_config.get("rules_autoreload")),
         },
     })
+
+
+@application.route("/rules/packs")
+def list_rule_packs():
+    """The ready-made rule catalog, annotated with what is already installed.
+
+    Read-only and open to any role, like GET /rules -- knowing which packs
+    exist is not a privileged fact, installing one is.
+    """
+    try:
+        existing = {r.sid for r in rules.load()}
+    except OSError:
+        existing = set()
+    return return_json_response({"packs": rulepacks.catalog(existing)})
+
+
+@application.route("/rules/packs/<pack_id>", methods=["POST"])
+@auth.requires_role("operator")
+def install_rule_pack(pack_id: str):
+    """Install every rule of a pack that isn't already there.
+
+    `include_noisy: false` leaves out the rules flagged as prone to matching
+    legitimate traffic — worth having during a quiet game, worth skipping when
+    the flow list is already full.
+    """
+    pack = rulepacks.find_pack(pack_id)
+    if pack is None:
+        return jsonify({"error": f"unknown pack: {pack_id}"}), 404
+
+    body = request.get_json(silent=True) or {}
+    include_noisy = bool(body.get("include_noisy", True))
+    wanted = [r for r in pack["rules"] if include_noisy or not r.get("noisy")]
+
+    try:
+        added = rules.add_many([r["raw"] for r in wanted])
+    except (ValueError, OSError) as e:
+        return jsonify({"error": str(e)}), 400
+
+    audit.log(
+        auth.current_user() or "?",
+        "rules.pack_install",
+        target=pack_id,
+        details={"added": len(added), "requested": len(wanted)},
+    )
+    result = {
+        "pack": pack_id,
+        "added": [r.sid for r in added],
+        "skipped": len(wanted) - len(added),
+        "tags": sorted({r["tag"] for r in wanted}),
+    }
+    reload = _maybe_autoreload()
+    if reload is not None:
+        result["reload"] = reload
+    return return_json_response(result)
 
 
 @application.route("/rules", methods=["POST"])
@@ -1589,7 +1764,10 @@ def getFlowDecoded(id):
     recursively) — saves the monitoring team a manual round-trip through
     CyberChef for the common case. Items with nothing decodable are omitted
     rather than returned with an empty layer list."""
-    id = uuid.UUID(id)
+    try:
+        id = uuid.UUID(id)
+    except ValueError:
+        return jsonify({"error": "invalid id"}), 400
     with db.connection() as c:
         flow = c.flow_detail(id)
     if not flow:

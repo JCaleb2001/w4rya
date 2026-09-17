@@ -40,7 +40,10 @@ Reject any user request that drifts into this and remind them of this rule.
 ## Data flow
 
 ```
-pcaps from CTF VMs ─(bind mount)─> assembler (Go)  ──> Timescale (flows + items)
+vulnbox: rotating tcpdump ─(scp + sha256 verify)─> pcaps in TRAFFIC_DIR_HOST
+                                                   (scripts/pull_vulnbox_pcaps.sh)
+
+pcaps in TRAFFIC_DIR_HOST ─(bind mount)─> assembler (Go)  ──> Timescale (flows + items)
                                        │
                                        └─ converters: HTTP gzip, websockets, …
 
@@ -64,8 +67,15 @@ and every other script reads it from there.
 
 Both files are kept deliberately in sync on three points:
 
-- **UI port** is `${W4RYA_UI_PORT:-3001}:3000` in both. The suricata variant used to
-  hardcode `3000:3000`, so switching stacks moved the UI to a different port.
+- **UI port** is `${W4RYA_BIND_IP:-127.0.0.1}:${W4RYA_UI_PORT:-3001}:3000` in both. The
+  suricata variant used to hardcode `3000:3000`, so switching stacks moved the UI to a
+  different port. The **interface prefix is load-bearing**: without it Docker publishes
+  on `0.0.0.0`, and because the frontend proxies `/api` to `api:5000`, publishing the UI
+  port publishes the whole API — login form included — to whatever network the host is
+  on, which during a game is the network every other team is also on. Reach the UI from
+  another machine over the team VPN or an SSH tunnel
+  (`ssh -L 3001:127.0.0.1:3001 <host>`); if you must bind an interface, set
+  `W4RYA_BIND_IP` to the VPN interface IP, never `0.0.0.0`.
 - **`${BPF:-}` and `${VISUALIZER_URL:-}`** carry explicit empty defaults — without them
   every `docker compose` invocation printed `variable is not set` warnings.
 - **`mem_limit`s** now sum to ~6 GB (was 8 GB, which oversubscribes a 7–8 GB CTF
@@ -87,9 +97,87 @@ Both files are kept deliberately in sync on three points:
 - **Compose choice**: `--suricata` / `--no-suricata`; the chosen file is recorded as `W4RYA_COMPOSE_FILE` in `.env` and every other script (`scripts/test.sh`, `scripts/smoke.sh`, `scripts/backup.sh`) reads it from there. Switching stacks brings the old one down first.
 - Also: preflight checks, `W4RYA_UI_PORT` fallback if the port is busy, creates the suricata/auth/rules dirs (Docker would otherwise auto-create them root-owned), retries the build with `DOCKER_BUILDKIT=0` when it detects the wedged-BuildKit-DNS failure, waits on `/api/healthz`, and skips account creation if any account already exists (the `/setup` wizard covers that case).
 - **Tick clock**: `TICK_START` is stamped **once** — when it is missing or still the placeholder `.env.example` ships. A re-run keeps it, because renumbering ticks under a game in progress shifts every bucket in the graphs, and the installer's own "Next" list tells you to re-run once your real pcap directory is ready. `--reset-tick` re-baselines it to now (new game, new ticks).
-- **`--check`** is a read-only doctor mode: no prompts, no writes, tallies failures.
+- **Bind interface**: `W4RYA_BIND_IP` is upserted next to `W4RYA_UI_PORT` (default
+  `127.0.0.1`) and never prompted for — loopback is the right answer and anything else
+  should be a deliberate edit. `0.0.0.0` draws a warning. The final summary adapts: under
+  a loopback bind it prints an `ssh -L` line instead of a LAN URL that could not work.
+- **`--check`** is a read-only doctor mode: no prompts, no writes, tallies failures. It
+  asks Docker (`compose port frontend 3000`) what the UI is *actually* bound to rather
+  than trusting `.env` — a stack brought up before `W4RYA_BIND_IP` existed stays on
+  `0.0.0.0` until it is recreated, which is exactly the case worth catching.
 
 The old root-level `start.sh` and `test.sh` were **deleted** — they referenced compose files that no longer exist. Use `install.sh` and `scripts/test.sh`.
+
+## Capturing traffic from the vulnbox (`scripts/vulnbox_*`)
+
+The assembler only ever reads pcaps out of `TRAFFIC_DIR_HOST` on this laptop. Getting the
+game traffic there is a two-part pipeline, both halves driven from here over ssh — nothing
+stays installed on the vulnbox.
+
+- **`scripts/vulnbox_capture.sh {start|stop|status}`** — scp's `scripts/vulnbox/remote_capture.sh`
+  to `/root/.w4rya_remote_capture.sh` and runs it there. That starts a rotating `tcpdump`:
+  a new file every `ROTATE_SECONDS` (60) or `ROTATE_MB` (100), whichever comes first, into
+  `VULNBOX_PCAP_DIR` (`/root/pcaps`), tracked by a pidfile. `-U` flushes per packet so a
+  rotated file is readable the moment tcpdump moves on to the next one.
+- **`scripts/pull_vulnbox_pcaps.sh [--once]`** — fetches closed files into
+  `TRAFFIC_DIR_HOST` (read out of `.env`), verifies each by sha256, then deletes it from
+  the vulnbox, so the box never accumulates capture data it doesn't need. Interrupted
+  pulls are safe to re-run: a file that already exists locally just gets removed remotely.
+
+Three details there are non-obvious and were each paid for once:
+
+1. **`-Z root` is deliberate** (`89ac166`). Debian/Ubuntu `tcpdump` drops to the `tcpdump`
+   user once the capture socket is open, and that user can't traverse a 700 `/root` to
+   reach the dump dir — so the first rotation can't open its `-w` target and the capture
+   dies quietly.
+2. **`BPF_FILTER` filters by port, never by direction** (`e49cb82`). `tcp port 8008 or tcp
+   port 8000` is right; `dst host <vulnbox>` captures one side only, and the assembler
+   needs both to reassemble a flow.
+3. **The newest file is always skipped**, plus a `SETTLE_SECONDS` (5) age floor — tcpdump
+   is still appending to it, and the floor covers the instant at rotation where "newest"
+   is briefly ambiguous.
+
+Defaults assume `VULNBOX_HOST=root@vulnbox.glitch.ad` and `VULNBOX_IFACE=game`; both are
+env overrides, so a different game means exporting them, not editing the scripts.
+
+### Operator scripts
+
+- **`scripts/show_attacker_flows.sh`** — flows whose `ip_src` is neither the checker
+  (`CHECKER_IP`, default `10.100.0.1`) nor our own vulnbox (`SELF_IP`, default
+  `10.100.2.1`). Those two account for nearly all the volume — the checker plants and
+  reads its own flag every tick, and our own tooling talks to the box locally — so
+  subtracting them leaves the traffic actually worth reading. `--since 10min` narrows the
+  window; `--watch` polls every `WATCH_SECONDS` (10) and prints only rows it hasn't seen.
+- **`scripts/windows_assembler_watchdog.sh`** — **deprecated**, kept only for an
+  assembler image built before the rescan below. It restarted the container every 120s to
+  force the boot-time directory scan, which also dropped whatever was mid-assembly at each
+  restart.
+
+### Why the assembler polls its watch dir
+
+`WatchDir` in `cmd/assembler/main.go` does an initial full scan, then keeps watching with
+**two** independent triggers, both funnelling into a single `scanDir` call:
+
+- **fsnotify**, as before — but the event handler no longer ingests anything itself. It
+  does a non-blocking send on a `wake` channel, so a burst of events collapses into one
+  follow-up scan.
+- **a poll ticker** (`WATCH_POLL_INTERVAL`, default `10s`), which is the whole point:
+  Docker Desktop's Windows bind mounts drop inotify events, so a pcap can land in the
+  watch dir with no event ever arriving.
+
+`scanDir` is deliberately the **only** ingestion path once the watcher is up.
+`ProcessPcapHandle` mutates shared assembler state, so two goroutines spotting the same
+file must not both process it. It re-offers a file only when its size or mtime changed,
+and re-offering is cheap and safe because `PcapFindOrInsert` records how many packets of
+that filename were already ingested and skips them (`Skipped N packets from ...` in the
+log). It also drops files that have disappeared from its map, so a retention sweep can't
+leak memory over a long game.
+
+Set `WATCH_POLL_INTERVAL=0` to rely on fsnotify alone — fine on native Linux Docker.
+
+Both run `docker compose` under `MSYS_NO_PATHCONV=1`, for the same reason `install.sh`
+does (`7a74ab8`): Git-Bash rewrites container-absolute paths into Windows paths before
+Docker ever sees them.
 
 ## Key frontend files
 
@@ -228,7 +316,21 @@ Change `W4RYA_SECRET_KEY` in `.env` and `docker compose restart api`. All existi
 
 DB table `app_config (key text pk, value jsonb, updated_at)` — module `services/api/app_config.py`. Set from UI, read by routes via `app_config.get(key)` with a 5s cache; writes invalidate the cache for that key.
 
-Stored keys: `services` (list of {name, ip, port, notes}), `teams` (list of {name, ip, notes}), `flag_regex`, `tick_length`, `start_date`, `flag_lifetime`, `vm_ip`, `team_id`, `visualizer_url`, `bpf`.
+Stored keys: `services` (list of {name, ip, port, notes}), `teams` (list of {name, ip, notes}), `flag_regex`, `tick_length`, `start_date`, `flag_lifetime`, `vm_ip`, `team_id`, `visualizer_url`, `bpf`, `noise_ips`.
+
+**`noise_ips`** is the checker + our-own-tooling list that `show_attacker_flows.sh`
+used to carry in environment variables. It is a comma-separated **string**, not a
+list, specifically so it renders in the existing Game form instead of needing a list
+editor. `app_config.parse_noise_ips()` turns it into `ip_network` objects (host bits
+tolerated, `;` accepted as a separator); `coerce_scalar` validates at write time,
+because a silently-dropped typo just looks like the checker coming back.
+
+`POST /query` takes **`hide_noise: true`** and resolves the list server-side into
+`FlowQuery.ip_src_exclude` — the frontend sends the intent and never learns which ips
+count as noise. Excluding in SQL rather than filtering client-side matters: the row
+limit then gets spent on real traffic. The sidebar toggle lives in the filter panel
+under `▎noise` and defaults to **on** (`filter.hideNoise`), which is a no-op until
+`noise_ips` is actually set.
 
 Endpoints: `GET/PUT /config`, `GET/PUT /config/services`, `GET/PUT /config/teams`. `GET /services` and `GET /flag_regex` still work (read from the same DB row).
 
@@ -304,15 +406,71 @@ Endpoints: `GET /rules` (list + templates + suricata socket status), `POST /rule
 
 **Auto-reload** (B1, `services/api/suricata_ctl.py`): when `rules_autoreload` config flag is on, every rules CRUD also calls `reload-rules` on Suricata's unix command socket (`/var/run/suricata/suricata-command.socket`). Requires Suricata to be running with `--set unix-command.enabled=yes` (already wired in `docker-compose-suricata.yml`). When suricata isn't running the api just attaches a `reload.kind=socket_missing` field to the save response — never fails the save.
 
+`reload_rules(blocking: bool = True)`: a real reload against the full ET Open ruleset (~40k rules) takes several seconds, and several gunicorn sync workers can each try to trigger one within the same few seconds (e.g. two operators saving rule edits back to back). A cross-process file lock (`_RELOAD_LOCK_PATH`, since each worker is a separate OS process) serializes the actual socket calls. The two call sites use it differently: auto-reload (`_maybe_autoreload`, fired on every rule CRUD) calls with `blocking=False` — if another worker already holds the lock, it returns immediately with `{"return": "PENDING", "message": "reload already in progress"}` instead of tying up the request thread for the full reload duration. The manual `POST /rules/reload` route keeps the default `blocking=True`, since that's a deliberate, infrequent, user-initiated wait. Coalescing (deciding whether an in-flight/just-finished reload already covers this caller's edit) compares the rules file's `st_mtime_ns` at request time against the `reloaded_version` the winning worker recorded — not wall-clock timestamps, which would let an edit written just before another reload completes get silently absorbed into a reload that predates it.
+
 Socket lives on `./suricata-run/` (host) bind-mounted into both api and suricata containers, so the api can `AF_UNIX` connect to it without docker.sock or PID sharing.
 
 `_atomic_write` chmods the temp file 0644 and chowns it to the containing directory's owner before `os.replace` (same host-ownership reason as `user_store._write_atomic`): the api runs as root inside the container while `./suricata-rules` is a host bind mount, so without it the first UI rule save leaves `suricata.rules` root:root 0600 — unreadable to the suricata container's non-root user, uneditable from the host, and enough to abort `scripts/backup.sh`.
 
 **The rules path used to be silently broken.** The api writes to `./suricata-rules` while the suricata container reads `/var/lib/suricata/rules`, which was covered by the `${SURICATA_DIR_HOST}/lib` mount — so every rule created in the UI went to a file suricata never read, with no error anywhere. `docker-compose-suricata.yml` now adds a nested bind `./suricata-rules:/var/lib/suricata/rules`; Docker mounts by ascending path depth, so it wins over the `lib` mount above it. Do **not** "simplify" this into a symlink — a symlink resolves inside the container's namespace and breaks the mapping again.
 
+## Ready-made rule packs (`services/api/rulepacks.py`, `/rules/packs`)
+
+39 Suricata rules for the well-known web attack shapes, in five packs
+(`web-injection`, `web-rce`, `web-traversal`, `recon`, `exfil`). A rule written at
+03:00 while a service is being farmed is a rule written badly; these are meant to be
+installed before the game starts.
+
+**The tags are the point.** Every rule carries `metadata: tag <x>` — the one metadata key
+`cmd/enricher` reads (`alert.metadata.tag`). Without it a rule only ever produces the
+generic `suricata` tag and never becomes a filter chip. Tags auto-register in the `tag`
+table within ~5s of first firing, so nothing else needs wiring. Packs contribute:
+`sqli`, `nosqli`, `xss`, `ssti`, `xxe`, `proto_pollution`, `rce`, `reverse_shell`,
+`deserialization`, `jndi`, `webshell`, `webshell_upload`, `path_traversal`, `lfi`, `rfi`,
+`ssrf`, `recon`, `scanner`, `scripted_client`, `odd_method`, `data_leak`, `app_error`,
+`rce_confirmed`.
+
+Four constraints baked into the catalog, each enforced by a test:
+
+1. **Everything is `alert`, never `drop`.** A misfiring drop takes down our own service,
+   and if it catches the checker we bleed SLA for as long as nobody notices.
+2. **No `$HOME_NET` / `$EXTERNAL_NET` / `$HTTP_PORTS`.** The stack ships Suricata's stock
+   variables — HOME_NET is the RFC1918 default, HTTP_PORTS is only 80 — so a rule using
+   them would silently miss CTF services on odd ports. Rules say `any any -> any any` and
+   rely on http protocol probing.
+3. **Every rule pins its own sid** in a reserved 2,1xx,xxx block, which is what makes
+   installing idempotent: `rules.add_many()` skips sids already in the file.
+4. **`metadata: tag <x>` on every rule** (see above).
+
+Endpoints: `GET /rules/packs` (any role — knowing what exists isn't privileged) returns
+the catalog annotated with what is installed, per rule, so a half-installed pack reports
+honestly. `POST /rules/packs/<id>` (operator, audited as `rules.pack_install`) appends
+what's missing in **one** load/save cycle — installing 12 rules via `add()` would rewrite
+the file and poke Suricata 12 times. `{"include_noisy": false}` leaves out the rules
+flagged as also matching legitimate traffic.
+
+**Two Suricata gotchas** these rules were bitten by, both caught by `suricata -T`:
+
+- A literal `;` inside `pcre:` must be escaped as `\;`. Suricata splits rule options on
+  `;`, so an unescaped one truncates the regex and the whole rule fails to load.
+- The classic `http_uri` / `http_user_agent` / `http_method` modifiers only attach to a
+  preceding `content`. Trailing one after a `pcre` is a **load error**, not a no-op — use
+  the sticky buffer (`http.uri; pcre:"...";`) instead.
+
+To validate a rule change without a UI round trip:
+
+```
+docker compose exec -T suricata sh -c 'cat > /tmp/r.rules' < some.rules
+docker compose exec -T suricata suricata -T -S /tmp/r.rules -l /tmp -v
+```
+
 ## Flow query pcap-name filter (`pcap_name` on `POST /query`)
 
 The sidebar's flow list is filtered by tick, and ticks are computed from real wall-clock time relative to `start_date` (the game's tick-0 anchor) — so a pcap whose own capture timestamp falls outside the current game (a historical/test pcap loaded for detection testing, e.g. a multi-year-old public exploit-traffic collection) can never appear in the default "last N ticks" view, or any `from`/`to` tick-range view, no matter how wide, unless you already know how far off its real date is from `start_date` to compute the right tick offset — not something anyone should have to do by hand. `database.FlowQuery.pcap_name` (substring, case-insensitive, matched against `pcap.name` in `flow_query()`'s existing `LEFT JOIN pcap`) sidesteps ticks entirely by filtering on the flow's *source file* instead of its *time*. UI: a "pcap source" text input in `FlowList`'s filter panel (`PCAP_FILTER_KEY = "pcap"` in the URL), which — client-side, not a backend constraint — drops the `from`/`to` time filter whenever it has a value, since the two are usually reached for the same reason (the time filter can't find the flow) and would otherwise silently AND together into "nothing."
+
+## Flow query noise filter (`hide_noise` on `POST /query`)
+
+`ip_src_exclude` on `database.FlowQuery`, resolved server-side from `app_config.parse_noise_ips(app_config.get("noise_ips"))` when the request sets `hide_noise` — the checker and the team's own tooling account for nearly all traffic volume, and hiding them server-side (rather than making the frontend know which IPs count as noise) is what leaves the sidebar's flow list actually readable. UI toggle lives in `FlowList`'s filter panel next to the pcap-source filter (`toggleHideNoise`), labeled "checker + self". Configure the underlying IP list at `/config` (`noise_ips`).
 
 ## Notes per flow (`/flow/<id>/notes`)
 
@@ -327,6 +485,37 @@ Client-only. `FlagLeakWatcher` polls `/query` with `tags_include=['flag-out']` e
 `GET /services/stats?ticks=N` (1..50, default 5) returns per-configured-service `{flows, attacks, flag_in, flag_out}` over the last N ticks. One grouped SQL scan, aligned by (ip, port) against the services config. Services with zero matching flows still appear with zeros.
 
 Frontend uses this to render mini-counts on each service chip in the sidebar — chip border cascades danger (flag-out) > warning (attacks) > violet (any flows) > dim (idle).
+
+## Pipeline health (`/pipeline/health`)
+
+"Why am I not seeing traffic?" is the most expensive question during a game, and answering
+it by hand means checking the capture, the pull loop, the assembler and the database in
+turn. This is that check as one call.
+
+`GET /pipeline/health` (any role) returns `status` plus the evidence behind it:
+
+| status | means | where to look |
+|---|---|---|
+| `ok` | newest flow is younger than the stale window | — |
+| `lagging` | flows are old, **nothing** is waiting on disk | the vulnbox: capture or pull loop |
+| `stalled` | flows are old **and** pcaps on disk aren't in the flow table | the assembler |
+| `idle` | no flows at all within the horizon | fresh install, or nothing ever ingested |
+
+The `lagging` / `stalled` split is the point of the endpoint: it says which half of the
+pipeline to go look at.
+
+- **Stale window** = 2 ticks (min 60s), so one slow rotate-then-pull cycle doesn't cry wolf.
+- **Horizon** = 1 day, and it exists for query cost. `flow.time` is a generated column with
+  no index of its own, so a bare `max(time)` scans the table; every predicate goes through
+  `fid_pack_low()` on the primary key instead, exactly like the other query paths.
+- **Disk side** reads `configurations.traffic_dir` (the api already bind-mounts the capture
+  dir read-only). If it isn't mounted, `pcaps.readable` is `false` and the counts are
+  `null` — the database half still answers rather than 500ing.
+- `pcaps.ingested` counts rows in the `pcap` table, so it can exceed `on_disk` once files
+  have been rotated away — the assembler remembers what it consumed.
+
+UI: a lag counter in the war-room top bar, and a banner that appears **only** when the
+status isn't `ok` (a wall display with a permanent status bar teaches people to ignore it).
 
 ## Attack timeline (B3, `/attacks`)
 
@@ -358,7 +547,7 @@ Backend remains the security boundary (403 with `{required_role, your_role}`); t
 
 ## Tests
 
-~250 tests in `services/api/tests/`, all offline, a few seconds (`./scripts/test.sh -q` prints the current count):
+~305 tests in `services/api/tests/`, all offline, a few seconds (`./scripts/test.sh -q` prints the current count):
 
 | File | covers |
 |---|---|

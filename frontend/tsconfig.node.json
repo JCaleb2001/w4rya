@@ -2,7 +2,11 @@
   "compilerOptions": {
     "composite": true,
     "module": "esnext",
-    "moduleResolution": "node"
+    "moduleResolution": "node",
+    // vite.config.ts reads the version out of package.json so the UI and the
+    // repo can't drift apart again.
+    "resolveJsonModule": true,
+    "allowSyntheticDefaultImports": true
   },
   "include": ["vite.config.ts"]
 }

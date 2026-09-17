@@ -94,6 +94,10 @@ function GameForm({ canEdit }: { canEdit: boolean }) {
     team_id: { label: "our team id" },
     visualizer_url: { label: "visualizer url (optional)" },
     bpf: { label: "bpf filter (optional)", note: RESTART },
+    noise_ips: {
+      label: "extra noise ips (our own tooling, etc — comma separated)",
+      note: "confirmed checker IPs from the Checker tab are hidden automatically, no need to also list them here",
+    },
   };
 
   return (

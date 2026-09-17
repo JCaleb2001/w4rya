@@ -71,6 +71,9 @@ export interface FlowsQuery {
   tags_include?: string[];
   tags_exclude?: string[];
   tag_intersection_mode?: "AND" | "OR";
+  // Drop the checker and our own tooling. Which ips those are lives in
+  // the noise_ips config, so the client only sends the intent.
+  hide_noise?: boolean;
   flags?: string[];
   flagids?: string[];
 }

@@ -533,6 +533,35 @@ def test_rule_content_clauses_old_style_postfix_buffer_modifier(rules_files):
     assert clauses == [(b"/api/sheets/", "contains", "uri"), (b"token=", "contains", "uri")]
 
 
+def test_rule_content_clauses_postfix_buffer_after_safe_bare_modifier(rules_files):
+    """Common real ET-style ordering: a bare modifier like `nocase;` sits
+    between the content and its postfix buffer keyword
+    (`content:"..."; nocase; http_uri;`). The lookahead must keep scanning
+    past `nocase` instead of stopping there and leaving the clause scoped
+    to the default "pkt" buffer — which would silently reintroduce
+    whole-packet substring matching for this clause."""
+    import attack
+    custom, _ = rules_files
+    custom.write_text(
+        'alert http any any -> any 8008 (msg:"x"; content:"token="; nocase; '
+        'http_uri; sid:1000410;)\n'
+    )
+    clauses = attack.rule_content_clauses(1000410)
+    assert clauses == [(b"token=", "contains", "uri")]
+
+
+def test_rule_content_clauses_malformed_hex_run_bails_instead_of_crashing(rules_files):
+    """An odd number of `|` in a content clause (malformed hex run) must
+    degrade to "can't isolate" (None), not raise ValueError up through
+    find_exploit_item to the API layer."""
+    import attack
+    custom, _ = rules_files
+    custom.write_text(
+        'alert tcp any any -> any 1433 (msg:"x"; content:"x|00p"; sid:1000411;)\n'
+    )
+    assert attack.rule_content_clauses(1000411) is None
+
+
 def test_rule_content_clauses_decodes_hex_bytes(rules_files):
     import attack
     custom, _ = rules_files
@@ -743,25 +772,27 @@ def test_find_exploit_item_isolates_via_request_body_buffer(rules_files):
     assert (item_index, basis) == (1, "single_item")
 
 
-def test_find_exploit_item_many_distinct_matches_collapse_to_first_representative(rules_files):
-    """The real Nacos case that motivated the _MAX_MATCHED_ITEMS cap: a
-    scanner retries the same exploit template 100 times with a fresh
-    random function name each attempt, so all 100 requests are distinct
-    (not a byte-identical replay) yet all legitimately match the rule.
-    Past _MAX_MATCHED_ITEMS, listing all of them isn't "the exploit,
-    isolated" anymore — collapse to the first as a representative, same
-    as the identical-duplicate case."""
+def test_find_exploit_item_many_distinct_matches_are_never_silently_dropped(rules_files):
+    """The real Nacos case: a scanner retries the same exploit template 100
+    times with a fresh random identifier each attempt, so all 100 requests
+    are distinct (not a byte-identical replay) yet all legitimately match
+    the rule. Past _MAX_MATCHED_ITEMS these used to collapse to a single
+    representative — but that same code path also silently ate a genuine
+    multi-stage attack chain longer than the cap, which is worse than a
+    long list. Distinct matches are now always returned in full, however
+    many there are; only byte-identical duplicates collapse."""
     import attack
     custom, _ = rules_files
     custom.write_text(
         'alert http any any -> any any (msg:"x"; http.uri; content:"/nacos/v1/cs/ops/data/removal"; sid:1000202;)\n'
     )
+    n = attack._MAX_MATCHED_ITEMS + 1
     flow = _Flow([
         _Item("c", "raw", f"POST /nacos/v1/cs/ops/data/removal?id={i} HTTP/1.1\r\n\r\n".encode())
-        for i in range(attack._MAX_MATCHED_ITEMS + 1)
+        for i in range(n)
     ])
     item_index, basis = attack.find_exploit_item(flow, 1000202)
-    assert (item_index, basis) == (0, "single_item")
+    assert (item_index, basis) == (list(range(n)), "matched_items")
 
 
 def test_narrow_flow_to_items_keeps_only_the_given_items_in_order(rules_files):
@@ -839,6 +870,24 @@ def test_locate_vulnerable_input_does_not_confuse_cookie_with_query_param():
     assert len(results) == 1
     assert results[0]["location"] == 'query parameter "token"'
     assert results[0]["value"] == "7da31352"
+
+
+def test_locate_vulnerable_input_matches_multibyte_pattern_consistently():
+    """The pattern (from a Suricata content clause, decoded latin-1 in
+    attack.py) and the haystack it's searched against must use the same
+    encoding — both come from the same raw byte source. A 2-byte UTF-8
+    sequence (e.g. the "é" in a query value) decodes to ONE char under
+    utf-8 but TWO chars under latin-1; mixing the two would make an
+    identical byte sequence compare unequal and silently fail to pinpoint
+    the field."""
+    import attack
+    # b"\xc3\xa9" is "é" encoded as UTF-8, and also the exact bytes a
+    # Suricata content clause captured from the wire would contain.
+    data = b"GET /api/users?name=jos\xc3\xa9 HTTP/1.1\r\nHost: x\r\n\r\n"
+    clauses = [(b"\xc3\xa9", "contains", "uri")]
+    results = attack.locate_vulnerable_input(data, clauses)
+    assert len(results) == 1
+    assert results[0]["location"] == 'query parameter "name"'
 
 
 def test_locate_vulnerable_input_pinpoints_json_body_field():
@@ -921,3 +970,15 @@ def test_locate_vulnerable_input_truncates_long_values():
     results = attack.locate_vulnerable_input(data, clauses)
     assert len(results[0]["value"]) <= 301  # 300 chars + the truncation marker
     assert results[0]["value"].endswith("…")
+
+
+def test_attack_timeline_exclude_ips_array_is_type_cast():
+    """`ANY(%(exclude_ips)s)` with no cast makes psycopg send an untyped param;
+    Postgres can't infer the element type of an *empty* array and raises
+    IndeterminateDatatype — which is exactly what exclude_ips is by default,
+    before any checker IP has been confirmed. No live DB in this suite, so
+    this only guards the SQL text itself against losing the cast again."""
+    import inspect
+    import database
+    src = inspect.getsource(database.Connection.attack_timeline)
+    assert "ANY(%(exclude_ips)s::text[])" in src

@@ -35,6 +35,9 @@ class FlowQuery:
     # Multi-service filter: list of (ip, port) pairs OR-ed together. Lets the
     # UI multi-select chips translate to a single SQL query.
     services: list[tuple[IPv4Network | IPv6Network, int]] = field(default_factory=list)
+    # Sources to drop: the checker and our own tooling. Excluded rather
+    # than filtered in the UI so the row limit is spent on real traffic.
+    ip_src_exclude: list[IPv4Network | IPv6Network] = field(default_factory=list)
     time_from: datetime | None = None
     time_to: datetime | None = None
     tags_include: list[str] = field(default_factory=list)
@@ -182,6 +185,16 @@ class Connection(psycopg.Connection):
                 )
             conditions.append(sql.SQL("(") + sql.SQL(" OR ").join(pair_sqls) + sql.SQL(")"))
 
+        if query.ip_src_exclude:
+            excl_sqls = []
+            for i, net in enumerate(query.ip_src_exclude):
+                key = f"ip_src_excl_{i}"
+                parameters[key] = net
+                excl_sqls.append(sql.SQL("f.ip_src <<= %({k})s").format(k=sql.SQL(key)))
+            conditions.append(
+                sql.SQL("NOT (") + sql.SQL(" OR ").join(excl_sqls) + sql.SQL(")")
+            )
+
         if query.time_from:
             parameters["time_from"] = query.time_from
             conditions.append(sql.SQL("f.id > fid_pack_low(%(time_from)s)"))
@@ -288,6 +301,7 @@ class Connection(psycopg.Connection):
             WHERE fi.flow_id = %(flow_id)s
                 AND fi.id > fid_pack_low(%(time_start)s)
                 AND fi.id < fid_pack_high(%(time_end)s)
+            ORDER BY fi.id
         """
 
         parameters = {
@@ -397,9 +411,9 @@ class Connection(psycopg.Connection):
         (ip, port) to the configured service name.
 
         `exclude_ips`: confirmed checker/gameserver IPs (app_config's
-        `checker_ips`, set via /checker/candidates) — filtered in Python
-        rather than SQL since the list is short and already in memory by
-        the time this runs once per request.
+        `checker_ips`, set via /checker/candidates) — excluded in SQL,
+        before LIMIT, so a busy checker can't push real attacker events
+        out of the already-limited result set.
         """
         sql_query = """
             SELECT id, time,
@@ -411,13 +425,17 @@ class Connection(psycopg.Connection):
             WHERE (jsonb_array_length(signatures) > 0 OR tags ? 'flag-out')
               AND id > fid_pack_low(%(t0)s)
               AND id < fid_pack_high(%(t1)s)
+              AND NOT (host(ip_src) = ANY(%(exclude_ips)s::text[]))
             ORDER BY time DESC
             LIMIT %(limit)s
         """
         with self.cursor(row_factory=dict_row) as cursor:
             rows = cursor.execute(
                 sql_query,
-                {"t0": time_from, "t1": time_to, "limit": limit},
+                {
+                    "t0": time_from, "t1": time_to, "limit": limit,
+                    "exclude_ips": sorted(exclude_ips) if exclude_ips else [],
+                },
             ).fetchall()
 
         svc_by_key = {
@@ -428,8 +446,6 @@ class Connection(psycopg.Connection):
         for r in rows:
             ip_dst = str(r["ip_dst"]).split("/", 1)[0]
             ip_src = str(r["ip_src"]).split("/", 1)[0]
-            if exclude_ips and ip_src in exclude_ips:
-                continue
             svc_name = svc_by_key.get((ip_dst, int(r["port_dst"])), "unknown")
             if service_filter and svc_name != service_filter:
                 continue
@@ -587,3 +603,44 @@ class Connection(psycopg.Connection):
                 "flag_out": int(row["flag_out"] or 0) if row else 0,
             })
         return out
+
+    def pipeline_health(self, tick_start: datetime, hour_start: datetime,
+                        horizon: datetime) -> dict:
+        """Freshness of the ingest pipeline: newest flow, and recent volume.
+
+        Every predicate goes through fid_pack_low(...) on the primary key
+        rather than the generated `time` column, which is what the rest of the
+        query paths do -- `time` has no index of its own, so a bare max(time)
+        would scan the whole table. `horizon` bounds the max(): if nothing has
+        been ingested since then the answer is NULL, which the caller reads as
+        "no recent traffic" rather than paying for a full scan to find some
+        flow from three games ago.
+        """
+        sql_query = """
+            SELECT max(time)                                         AS last_flow_time,
+                   count(*) FILTER (WHERE id > fid_pack_low(%(tick_start)s)) AS flows_last_tick,
+                   count(*) FILTER (WHERE id > fid_pack_low(%(hour_start)s)) AS flows_last_hour
+            FROM flow
+            WHERE id > fid_pack_low(%(horizon)s)
+        """
+        with self.cursor(row_factory=dict_row) as cursor:
+            row = cursor.execute(sql_query, {
+                "tick_start": tick_start,
+                "hour_start": hour_start,
+                "horizon": horizon,
+            }).fetchone()
+        return {
+            "last_flow_time": row["last_flow_time"] if row else None,
+            "flows_last_tick": int(row["flows_last_tick"] or 0) if row else 0,
+            "flows_last_hour": int(row["flows_last_hour"] or 0) if row else 0,
+        }
+
+    def ingested_pcap_names(self) -> list[str]:
+        """Basenames of every pcap the assembler has recorded.
+
+        The assembler stores the path it opened ("/traffic/foo.pcap"), so the
+        caller compares basenames against what is on disk.
+        """
+        with self.cursor() as cursor:
+            rows = cursor.execute("SELECT name FROM pcap").fetchall()
+        return [str(r[0]).rsplit("/", 1)[-1] for r in rows]
