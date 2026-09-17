@@ -397,9 +397,9 @@ class Connection(psycopg.Connection):
         (ip, port) to the configured service name.
 
         `exclude_ips`: confirmed checker/gameserver IPs (app_config's
-        `checker_ips`, set via /checker/candidates) — filtered in Python
-        rather than SQL since the list is short and already in memory by
-        the time this runs once per request.
+        `checker_ips`, set via /checker/candidates) — excluded in SQL,
+        before LIMIT, so a busy checker can't push real attacker events
+        out of the already-limited result set.
         """
         sql_query = """
             SELECT id, time,
@@ -411,13 +411,17 @@ class Connection(psycopg.Connection):
             WHERE (jsonb_array_length(signatures) > 0 OR tags ? 'flag-out')
               AND id > fid_pack_low(%(t0)s)
               AND id < fid_pack_high(%(t1)s)
+              AND NOT (host(ip_src) = ANY(%(exclude_ips)s::text[]))
             ORDER BY time DESC
             LIMIT %(limit)s
         """
         with self.cursor(row_factory=dict_row) as cursor:
             rows = cursor.execute(
                 sql_query,
-                {"t0": time_from, "t1": time_to, "limit": limit},
+                {
+                    "t0": time_from, "t1": time_to, "limit": limit,
+                    "exclude_ips": sorted(exclude_ips) if exclude_ips else [],
+                },
             ).fetchall()
 
         svc_by_key = {
@@ -428,8 +432,6 @@ class Connection(psycopg.Connection):
         for r in rows:
             ip_dst = str(r["ip_dst"]).split("/", 1)[0]
             ip_src = str(r["ip_src"]).split("/", 1)[0]
-            if exclude_ips and ip_src in exclude_ips:
-                continue
             svc_name = svc_by_key.get((ip_dst, int(r["port_dst"])), "unknown")
             if service_filter and svc_name != service_filter:
                 continue

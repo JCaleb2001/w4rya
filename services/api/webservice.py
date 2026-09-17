@@ -1427,7 +1427,7 @@ def _maybe_autoreload() -> dict | None:
     if not app_config.get_fresh("rules_autoreload"):
         return None
     try:
-        return suricata_ctl.reload_rules()
+        return suricata_ctl.reload_rules(blocking=False)
     except FileNotFoundError as e:
         return {"error": str(e), "kind": "socket_missing"}
     except (OSError, ValueError) as e:
@@ -1589,7 +1589,10 @@ def getFlowDecoded(id):
     recursively) — saves the monitoring team a manual round-trip through
     CyberChef for the common case. Items with nothing decodable are omitted
     rather than returned with an empty layer list."""
-    id = uuid.UUID(id)
+    try:
+        id = uuid.UUID(id)
+    except ValueError:
+        return jsonify({"error": "invalid id"}), 400
     with db.connection() as c:
         flow = c.flow_detail(id)
     if not flow:
