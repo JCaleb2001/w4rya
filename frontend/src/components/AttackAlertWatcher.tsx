@@ -39,6 +39,7 @@ export function AttackAlertWatcher() {
 
     for (const event of events) {
       if (seenRef.current.has(event.flow_id)) continue;
+      seenRef.current.add(event.flow_id);
       const names = event.rules.map((r) => r.message).filter(Boolean);
       const label = names.length > 0 ? names.join(", ") : "suricata alert";
       dispatch(
