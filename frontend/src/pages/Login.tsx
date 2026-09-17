@@ -124,7 +124,7 @@ export function Login() {
         </form>
 
         <div className="text-[10px] uppercase tracking-[0.3em] text-hax-dim">
-          v0.3.0 // team-internal access only
+          v{__APP_VERSION__} // team-internal access only
         </div>
       </div>
     </div>
