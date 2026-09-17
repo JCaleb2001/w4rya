@@ -1427,7 +1427,7 @@ def _maybe_autoreload() -> dict | None:
     if not app_config.get_fresh("rules_autoreload"):
         return None
     try:
-        return suricata_ctl.reload_rules()
+        return suricata_ctl.reload_rules(blocking=False)
     except FileNotFoundError as e:
         return {"error": str(e), "kind": "socket_missing"}
     except (OSError, ValueError) as e:

@@ -17,6 +17,8 @@ import socket as _socket
 import time as _time
 from typing import Any
 
+import rules as _rules
+
 try:
     import fcntl  # POSIX only — the api container always runs on Linux;
     # a Windows dev/test environment (no fcntl) falls back to unlocked
@@ -110,34 +112,71 @@ def _write_reload_state(state: dict) -> None:
     os.replace(tmp, _RELOAD_STATE_PATH)
 
 
-def reload_rules() -> dict:
+def _rules_file_version() -> int | None:
+    """Fingerprint of the on-disk rules file, used to decide whether a
+    completed reload actually covers a given caller's edit (see
+    reload_rules docstring). None if the file doesn't exist yet."""
+    try:
+        return os.stat(_rules.RULES_FILE).st_mtime_ns
+    except OSError:
+        return None
+
+
+def reload_rules(blocking: bool = True) -> dict:
     """Ask Suricata to re-read the rules file. Returns the raw response dict.
 
     Coalesces concurrent callers: a reload against a large ruleset (~40k
     active ET Open rules) can take several seconds, and several gunicorn
     workers — separate OS processes, so an in-process threading.Lock
     wouldn't help — can each try to trigger one within the same few
-    seconds (e.g. two operators saving rule edits back to back). Left
-    uncoordinated, every worker independently blocks on its own socket
-    call, which with only a handful of sync workers can occupy the whole
-    pool. A file lock (shared by all workers via the container's
-    filesystem) serializes the actual socket calls; a caller that starts
-    waiting for the lock AFTER another reload already began skips
-    triggering a second one and reuses that one's result instead, since a
-    reload that completed after this call started already covers whatever
-    rule state prompted it.
+    seconds (e.g. two operators saving rule edits back to back). A file
+    lock (shared by all workers via the container's filesystem) serializes
+    the actual socket calls.
+
+    Coalescing is decided by comparing the rules file's mtime, not by
+    wall-clock arrival order: a caller only reuses another reload's result
+    if that reload's own snapshot of the file (taken right before it sent
+    reload-rules to Suricata) matches the file's current mtime. Wall-clock
+    "did I start waiting after that other reload began" doesn't guarantee
+    the other reload's socket call actually happened after this caller's
+    own edit hit disk, and coalescing into a stale reload would silently
+    drop a rule change.
+
+    `blocking=True` (the manual "reload now" button, POST /rules/reload) is
+    a deliberate, infrequent action — it waits for the real result. The
+    high-frequency auto-reload-on-save path (`_maybe_autoreload` in
+    webservice.py, on every add/update/delete/block-ip) uses
+    `blocking=False`: with only 3 sync gunicorn workers, having every one
+    of them block up to DEFAULT_TIMEOUT seconds inside the request handler
+    while one of them actually talks to Suricata can tie up the whole pool.
+    A non-blocking caller that loses the race for the lock returns
+    immediately with a "PENDING" status instead of waiting — a background
+    thread/polling endpoint would avoid this more thoroughly, but adds
+    real complexity (lifecycle outside the request, a new endpoint, poll
+    logic in the frontend) that isn't worth it for this traffic profile
+    (bursty rule edits, not sustained concurrency). The always-available
+    manual reload button is the mitigation for the residual case where an
+    operator's last edit lands with nothing left to trigger another
+    reload.
     """
     if fcntl is None:
         return _send_command({"command": "reload-rules"})
-    requested_at = _time.time()
     lock_fd = os.open(_RELOAD_LOCK_PATH, os.O_CREAT | os.O_RDWR, 0o666)
     try:
-        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        if blocking:
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        else:
+            try:
+                fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                return {"return": "PENDING", "message": "reload already in progress"}
+        current_version = _rules_file_version()
         state = _read_reload_state()
-        if state.get("completed_at", 0) >= requested_at:
+        if current_version is not None and state.get("reloaded_version") == current_version:
             return state.get("result", {"return": "OK", "message": "coalesced"})
+        version_before_send = _rules_file_version()
         result = _send_command({"command": "reload-rules"})
-        _write_reload_state({"completed_at": _time.time(), "result": result})
+        _write_reload_state({"reloaded_version": version_before_send, "result": result})
         return result
     finally:
         fcntl.flock(lock_fd, fcntl.LOCK_UN)
