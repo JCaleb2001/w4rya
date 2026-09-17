@@ -50,7 +50,7 @@ const baseQueryWithReauth: BaseQueryFn<
 
 export const w4ryaApi = createApi({
   baseQuery: baseQueryWithReauth,
-  tagTypes: ["Me", "Setup", "Users", "Config", "Services", "Teams", "TickInfo", "FlagRegex", "Rules", "Notes"],
+  tagTypes: ["Me", "Setup", "Users", "Config", "Services", "Teams", "TickInfo", "FlagRegex", "Rules", "Notes", "CheckerIps", "Exploits"],
   endpoints: (builder) => ({
     getServices: builder.query<Service[], void>({
       query: () => "/services",
@@ -97,6 +97,9 @@ export const w4ryaApi = createApi({
           flow: Object.values(representations),
         };
       },
+    }),
+    getFlowDecoded: builder.query<FlowDecoded, string>({
+      query: (id) => `/flow/${id}/decode`,
     }),
     getFlows: builder.query<Flow[], FlowsQuery>({
       query: (query) => ({
@@ -304,16 +307,92 @@ export const w4ryaApi = createApi({
       query: (body) => ({ url: "/config/teams", method: "PUT", body }),
       invalidatesTags: ["Teams"],
     }),
+    getConfigCheckerIps: builder.query<string[], void>({
+      query: () => "/config/checker-ips",
+      providesTags: ["CheckerIps"],
+    }),
+    updateConfigCheckerIps: builder.mutation<string[], string[]>({
+      query: (body) => ({ url: "/config/checker-ips", method: "PUT", body }),
+      invalidatesTags: ["CheckerIps"],
+    }),
+    getCheckerCandidates: builder.query<CheckerCandidatesPayload, { from_tick?: number; to_tick?: number } | void>({
+      query: (q) => {
+        const sp = new URLSearchParams();
+        if (q?.from_tick !== undefined) sp.set("from_tick", String(q.from_tick));
+        if (q?.to_tick !== undefined) sp.set("to_tick", String(q.to_tick));
+        const qs = sp.toString();
+        return `/checker/candidates${qs ? "?" + qs : ""}`;
+      },
+    }),
 
     // --- attack / exploit replay ---
     getAttackPreview: builder.query<AttackPreview, string>({
       query: (flow_id) => `/attack/preview/${flow_id}`,
     }),
+    getAttackPayload: builder.query<FlowPayload, string>({
+      query: (flow_id) => `/attack/payload/${flow_id}`,
+    }),
     attackReplay: builder.mutation<
       ReplayResponse,
-      { flow_id: string; targets: { name: string; ip: string }[]; timeout?: number }
+      {
+        flow_id: string;
+        targets: { name: string; ip: string }[];
+        timeout?: number;
+      } & ReplayOverrides
     >({
       query: (body) => ({ url: "/attack/replay", method: "POST", body }),
+    }),
+    getAttackSuggestRule: builder.query<SuggestedRule, string>({
+      query: (flow_id) => `/attack/suggest-rule/${flow_id}`,
+    }),
+    getAttackIncident: builder.query<
+      IncidentPacket,
+      { flow_id: string; sid?: number }
+    >({
+      query: ({ flow_id, sid }) =>
+        `/attack/incident/${flow_id}${sid !== undefined ? `?sid=${sid}` : ""}`,
+    }),
+    getAttackExploitCode: builder.query<
+      ExploitCode,
+      { flow_id: string; sid?: number }
+    >({
+      query: ({ flow_id, sid }) =>
+        `/attack/exploit-code/${flow_id}${sid !== undefined ? `?sid=${sid}` : ""}`,
+    }),
+
+    // --- saved exploit library ---
+    getExploits: builder.query<SavedExploit[], void>({
+      query: () => "/exploits",
+      providesTags: ["Exploits"],
+    }),
+    getExploit: builder.query<SavedExploitDetail, string>({
+      query: (id) => `/exploits/${id}`,
+      providesTags: (_r, _e, id) => [{ type: "Exploits", id }],
+    }),
+    saveExploit: builder.mutation<
+      SavedExploit & { source_ip_was_checker: boolean },
+      { flow_id: string; name: string; tag?: string; notes?: string } & ReplayOverrides
+    >({
+      query: (body) => ({ url: "/exploits", method: "POST", body }),
+      invalidatesTags: ["Exploits"],
+    }),
+    deleteExploit: builder.mutation<{ ok: boolean }, string>({
+      query: (id) => ({ url: `/exploits/${id}`, method: "DELETE" }),
+      invalidatesTags: ["Exploits"],
+    }),
+    replayExploit: builder.mutation<
+      ReplayResponse,
+      {
+        id: string;
+        targets: { name: string; ip: string }[];
+        timeout?: number;
+      } & ReplayOverrides
+    >({
+      query: ({ id, ...body }) => ({
+        url: `/exploits/${id}/replay`,
+        method: "POST",
+        body,
+      }),
     }),
 
     // --- suricata rules ---
@@ -446,9 +525,46 @@ export interface AttackPreview {
   port: number;
   src_ip: string;
   dst_ip: string;
+  /** true when src_ip is a confirmed checker IP (/config → checker tab) —
+   * NAT'd gateways mean this traffic can look identical to a real
+   * attacker's, so surface it rather than let an operator unknowingly
+   * save/replay the checker's own SLA behavior as a stolen exploit. */
+  src_ip_is_checker: boolean;
   payload_size: number;
   client_items: number;
   server_items: number;
+}
+
+export interface CheckerCandidateEvidence {
+  interval_regularity: number | null;
+  coefficient_of_variation: number | null;
+  service_coverage: number;
+  services_touched: number;
+  services_total: number;
+  clean_signature_rate: number;
+  flow_count: number;
+  alert_flow_count: number;
+}
+
+export interface CheckerCandidate {
+  ip: string;
+  confidence: number;
+  evidence: CheckerCandidateEvidence;
+}
+
+export interface CheckerCandidatesPayload {
+  from_tick: number;
+  to_tick: number;
+  current_tick: number;
+  candidates: CheckerCandidate[];
+}
+
+export interface SuggestedRule {
+  raw: string | null;
+  reason?: string;
+  basis?: "http_uri" | "raw_bytes";
+  port?: number;
+  matched?: string;
 }
 
 export interface ReplayResult {
@@ -469,6 +585,98 @@ export interface ReplayResponse {
   payload_size: number;
   timeout_s?: number;
   results: ReplayResult[];
+}
+
+export interface IncidentPacket {
+  flow_id: string;
+  sid: number | null;
+  rule_message: string | null;
+  tactic: string;
+  technique: string;
+  mitre: string | null;
+  severity: string;
+  remediation: string;
+  src_ip: string;
+  dst_ip: string;
+  dst_port: number;
+  time: string;
+  first_seen: string | null;
+  last_seen: string | null;
+  occurrence_count: number;
+  /** "METHOD /path" — null when isolation couldn't pin the alert down to
+   * one specific request (see attack.find_exploit_item). */
+  endpoint: string | null;
+  /** Which exact query param / body field / cookie carried the payload —
+   * empty when isolation failed, never a guess. Union across every
+   * matched request when matched_item_count > 1. */
+  vulnerable_inputs: { buffer: string; location: string; value: string | null }[];
+  /** > 1 when several genuinely distinct requests matched the rule (a
+   * multi-stage attack) — endpoint/vulnerable_inputs above are the union
+   * of all of them, not just one. Null when isolation was to a single
+   * request or failed entirely. */
+  matched_item_count: number | null;
+  payload_size: number;
+  decoded_payload: { whole: unknown[]; embedded: unknown[] };
+  text_packet: string;
+}
+
+export interface ExploitCode {
+  flow_id: string;
+  sid: number | null;
+  /** "single_item": isolated to just the one request that matched the
+   * firing rule. "matched_items": several genuinely distinct requests
+   * both/all matched (e.g. a two-stage attack) — `code` covers just those,
+   * not the whole session. "full_flow": couldn't isolate at all (pcre-only
+   * rule, zero matches, or no signature) — `code` is every client request
+   * in the flow, signup/signin/etc included. */
+  basis: "single_item" | "matched_items" | "full_flow";
+  /** "http": readable `requests`-based Python. "raw": the target doesn't
+   * speak HTTP (bare-TCP CTF service) — `code` is a plain socket
+   * connect/send/recv script (or a pwntools script when basis is
+   * "matched_items"/"full_flow" and more than one request had to be
+   * included). */
+  protocol: "http" | "raw";
+  /** Set only when basis is "single_item". */
+  item_index: number | null;
+  /** 1-indexed position among client requests only (item_index is a
+   * position in the full client+server items array, not directly
+   * meaningful to show) — null unless basis is "single_item". */
+  client_ordinal: number | null;
+  /** Same idea as client_ordinal, but for "matched_items" — one 1-indexed
+   * position per isolated request, in the order they appear in `code`.
+   * Null unless basis is "matched_items". */
+  matched_ordinals: number[] | null;
+  client_item_count: number;
+  code: string;
+}
+
+export interface SavedExploit {
+  id: string;
+  name: string;
+  tag: string;
+  source_flow_id: string | null;
+  port: number;
+  payload_size: number;
+  notes: string;
+  created_by: string;
+  created_at: string;
+}
+
+export interface SavedExploitDetail extends SavedExploit {
+  payload_text: string;
+}
+
+export interface FlowPayload {
+  flow_id: string;
+  port: number;
+  payload_text: string;
+}
+
+/** Optional overrides accepted by every replay/save route: leave both unset
+ * to use the flow's/exploit's own captured port + payload verbatim. */
+export interface ReplayOverrides {
+  port?: number;
+  payload_text?: string;
 }
 
 export interface Rule {
@@ -585,6 +793,10 @@ export interface AttackRule {
   id: number;
   message: string;
   action: string;
+  tactic: string;
+  technique: string;
+  mitre: string | null;
+  severity: "low" | "medium" | "high" | "critical";
 }
 
 export interface AttackEvent {
@@ -596,8 +808,35 @@ export interface AttackEvent {
   dst_port: number;
   service: string;
   type: "alert" | "flag_out" | "both";
+  tactic: string;
+  severity: "low" | "medium" | "high" | "critical";
   rules: AttackRule[];
   flag_out_count: number;
+}
+
+export interface DecodedLayer {
+  encoding: string;
+  preview: string;
+  truncated: boolean;
+}
+
+export interface DecodedEmbedded {
+  match: string;
+  offset: number;
+  layers: DecodedLayer[];
+}
+
+export interface DecodedItem {
+  item_index: number;
+  direction: string;
+  raw_size: number;
+  whole: DecodedLayer[];
+  embedded: DecodedEmbedded[];
+}
+
+export interface FlowDecoded {
+  flow_id: string;
+  items: DecodedItem[];
 }
 
 export interface AttacksQuery {
@@ -704,6 +943,7 @@ export const {
   useGetServicesQuery,
   useGetFlagRegexQuery,
   useGetFlowQuery,
+  useGetFlowDecodedQuery,
   useGetFlowsQuery,
   useLazyGetFlowsQuery,
   useGetTagsQuery,
@@ -730,8 +970,21 @@ export const {
   useUpdateConfigServicesMutation,
   useGetConfigTeamsQuery,
   useUpdateConfigTeamsMutation,
+  useGetConfigCheckerIpsQuery,
+  useUpdateConfigCheckerIpsMutation,
+  useGetCheckerCandidatesQuery,
   useGetAttackPreviewQuery,
+  useLazyGetAttackPayloadQuery,
+  useLazyGetAttackSuggestRuleQuery,
   useAttackReplayMutation,
+  useLazyGetAttackIncidentQuery,
+  useLazyGetAttackExploitCodeQuery,
+  useGetExploitsQuery,
+  useGetExploitQuery,
+  useLazyGetExploitQuery,
+  useSaveExploitMutation,
+  useDeleteExploitMutation,
+  useReplayExploitMutation,
   useGetRulesQuery,
   useAddRuleMutation,
   useGetRulePacksQuery,

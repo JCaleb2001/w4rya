@@ -37,7 +37,7 @@ class FakeSuricata:
         self.calls.append("available")
         return False
 
-    def reload_rules(self) -> dict:
+    def reload_rules(self, blocking: bool = True) -> dict:
         self.calls.append("reload_rules")
         return self._result
 

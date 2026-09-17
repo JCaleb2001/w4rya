@@ -60,11 +60,14 @@ import auth
 import app_config
 import attack
 import audit
+import decode
+import exploits
 import notes
 import rate_limit
 import rulepacks
 import rules
 import suricata_ctl
+import technique_map
 import user_store
 
 application = Flask(__name__)
@@ -397,6 +400,7 @@ def query():
                 if query.get("hide_noise")
                 else []
             ),
+            pcap_name=(str(query["pcap_name"]).strip() or None) if query.get("pcap_name") else None,
         )
     except re.error as error:
         return return_json_response(
@@ -524,10 +528,12 @@ def attacks_timeline():
     time_from = tick_first + (from_tick * tick_length)
     time_to = tick_first + (to_tick * tick_length)
     services_cfg = app_config.get("services") or []
+    checker_ips = set(app_config.get("checker_ips") or [])
 
     with db.connection() as c:
         events = c.attack_timeline(
-            time_from, time_to, services_cfg, service_filter, limit
+            time_from, time_to, services_cfg, service_filter, limit,
+            exclude_ips=checker_ips,
         )
 
     return return_json_response({
@@ -540,6 +546,80 @@ def attacks_timeline():
         "count": len(events),
         "events": events,
     })
+
+
+@application.route("/checker/candidates")
+def checker_candidates():
+    """Suggests src_ips that look like the gameserver checker (regular
+    per-tick cadence, full service coverage, no exploit signatures) — a
+    ranked suggestion for a human to confirm via PUT /config/checker-ips,
+    never an automatic exclusion. See checker_detect.py for the scoring.
+
+    Filters: ?from_tick=N&to_tick=M&limit=K. Default window = last 60 ticks
+    (wider than /attacks' default — periodicity needs enough samples).
+    """
+    try:
+        from_tick = request.args.get("from_tick", type=int)
+        to_tick = request.args.get("to_tick", type=int)
+        limit = int(request.args.get("limit", 10) or 10)
+    except (TypeError, ValueError):
+        return jsonify({"error": "bad numeric query param"}), 400
+    limit = max(1, min(50, limit))
+
+    tick_length_ms = int(app_config.get("tick_length") or 180000)
+    try:
+        tick_first = dateutil.parser.parse(app_config.get("start_date"))
+    except (TypeError, ValueError):
+        return jsonify({"error": "invalid start_date in config"}), 500
+    tick_length = timedelta(milliseconds=tick_length_ms)
+    now = datetime.now(tz=timezone.utc)
+    current_tick = int(((now - tick_first) // tick_length) + 1)
+    if from_tick is None:
+        from_tick = max(0, current_tick - 60)
+    if to_tick is None:
+        to_tick = current_tick + 1
+    if to_tick <= from_tick:
+        to_tick = from_tick + 1
+
+    time_from = tick_first + (from_tick * tick_length)
+    time_to = tick_first + (to_tick * tick_length)
+    services_cfg = app_config.get("services") or []
+    checker_ips = set(app_config.get("checker_ips") or [])
+
+    with db.connection() as c:
+        candidates = c.checker_candidates(
+            time_from, time_to,
+            total_known_ports=len(services_cfg) or 1,
+            exclude_ips=checker_ips,
+            limit=limit,
+        )
+
+    return return_json_response({
+        "from_tick": from_tick,
+        "to_tick": to_tick,
+        "current_tick": current_tick,
+        "candidates": candidates,
+    })
+
+
+@application.route("/config/checker-ips")
+def getConfigCheckerIps():
+    return return_json_response(app_config.get("checker_ips") or [])
+
+
+@application.route("/config/checker-ips", methods=["PUT"])
+@auth.requires_role("admin")
+def putConfigCheckerIps():
+    data = request.get_json(silent=True)
+    if not isinstance(data, list):
+        return jsonify({"error": "expected a list"}), 400
+    try:
+        validated = [app_config.validate_checker_ip(e) for e in data]
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    app_config.set("checker_ips", validated)
+    audit.log(auth.current_user() or "?", "config.checker_ips", details={"count": len(validated)})
+    return return_json_response(validated)
 
 
 @application.route("/services/stats")
@@ -765,14 +845,369 @@ def attack_preview(flow_id):
     if not flow:
         return jsonify({"error": "flow not found"}), 404
     payload = attack.build_payload(flow)
+    src_ip = str(flow.ip_src)
+    checker_ips = set(app_config.get("checker_ips") or [])
     return return_json_response({
         "flow_id": str(flow.id),
         "port": int(flow.port_dst),
-        "src_ip": str(flow.ip_src),
+        "src_ip": src_ip,
         "dst_ip": str(flow.ip_dst),
+        # NAT/gateway IPs are common on an A/D network, and the checker's own
+        # traffic can look identical to a real attacker's (same account/route
+        # lifecycle) — flag it so an operator doesn't save/replay the
+        # checker's own SLA behavior as if it were a stolen exploit.
+        "src_ip_is_checker": src_ip in checker_ips,
         "payload_size": len(payload),
         "client_items": sum(1 for i in flow.items if i.direction == "c" and i.kind == "raw"),
         "server_items": sum(1 for i in flow.items if i.direction == "s" and i.kind == "raw"),
+    })
+
+
+@application.route("/attack/suggest-rule/<flow_id>")
+def attack_suggest_rule(flow_id):
+    """Draft a Suricata rule from this flow's client payload — a starting
+    point for monitoring to review and POST to /rules, not an auto-add."""
+    try:
+        fid = uuid.UUID(flow_id)
+    except ValueError:
+        return jsonify({"error": "invalid flow id"}), 400
+    with db.connection() as c:
+        flow = c.flow_detail(fid)
+    if not flow:
+        return jsonify({"error": "flow not found"}), 404
+    return return_json_response(attack.suggest_rule(flow))
+
+
+def _choose_signature(flow, sid_param: str | None):
+    """Shared by /attack/incident and /attack/exploit-code: pick which of a
+    flow's signature hits to act on. `flow.signatures` decodes straight off
+    the jsonb column as plain dicts ({"id","message","action"}), not
+    `Signature` dataclass instances — same as database.attack_timeline().
+
+    Returns (chosen_dict_or_None, error_response_or_None); a non-None error
+    means the caller should return it directly. No sid param and no
+    signatures at all is not an error — chosen is just None (e.g. a pure
+    flag-leak flow).
+    """
+    if sid_param:
+        try:
+            sid_want = int(sid_param)
+        except ValueError:
+            return None, (jsonify({"error": "sid must be an integer"}), 400)
+        chosen = next((s for s in flow.signatures if s.get("id") == sid_want), None)
+        if not chosen:
+            return None, (jsonify({"error": "that sid did not fire on this flow"}), 404)
+        return chosen, None
+    if flow.signatures:
+        chosen = max(
+            flow.signatures,
+            key=lambda s: technique_map.SEVERITY_ORDER.get(
+                technique_map.classify(s.get("message"))["severity"], 0
+            ),
+        )
+        return chosen, None
+    return None, None
+
+
+@application.route("/attack/incident/<flow_id>")
+def attack_incident(flow_id):
+    """Bundle everything the patching team needs to act on one alert into
+    one response: technique + remediation hint, the decoded attacker
+    payload, how often this exact (rule, source) pair has fired before, and
+    — when isolation succeeds (see attack.find_exploit_item) — the specific
+    endpoint and input (query param / body field / header) the exploit
+    rides in, so the patching team knows exactly what to go audit without
+    reading a raw payload dump. Closes the loop from "an alert fired" to a
+    copy-pasteable incident report, instead of the monitoring team
+    hand-assembling one from the Attacks timeline, FlowView and the decode
+    panel separately.
+
+    `?sid=` picks which signature hit to report on when a flow matched more
+    than one rule; defaults to the highest-severity hit. No sid and no
+    signatures at all still returns a packet (technique falls back to
+    "Unknown"), since a pure flag-leak flow is still worth a report.
+    """
+    try:
+        fid = uuid.UUID(flow_id)
+    except ValueError:
+        return jsonify({"error": "invalid flow id"}), 400
+    with db.connection() as c:
+        flow = c.flow_detail(fid)
+    if not flow:
+        return jsonify({"error": "flow not found"}), 404
+
+    chosen, err = _choose_signature(flow, request.args.get("sid"))
+    if err:
+        return err
+
+    chosen_message = chosen.get("message") if chosen else None
+    classification = technique_map.classify(chosen_message)
+    payload = attack.build_payload(flow)
+    decoded = decode.decode_item(payload) if payload else {"whole": [], "embedded": []}
+
+    stats = {"first_seen": None, "last_seen": None, "occurrence_count": 0}
+    if chosen:
+        with db.connection() as c:
+            stats = c.incident_stats(chosen.get("id"), str(flow.ip_src))
+
+    # Endpoint + vulnerable-input pinpointing: only meaningful once we've
+    # isolated to a bounded set of specific requests (see find_exploit_item)
+    # — on a "full_flow" fallback we don't know which of several requests
+    # the rule actually meant, so we'd be guessing at which item to inspect.
+    endpoint = None
+    vulnerable_inputs: list[dict] = []
+    matched_item_count = None
+    if chosen:
+        item_index, basis = attack.find_exploit_item(flow, chosen.get("id"))
+        if basis == "single_item" and item_index is not None:
+            item_data = flow.items[item_index].data
+            endpoint = attack.describe_endpoint(item_data)
+            clauses = attack.rule_content_clauses(chosen.get("id"))
+            if clauses:
+                vulnerable_inputs = attack.locate_vulnerable_input(item_data, clauses)
+        elif basis == "matched_items" and item_index:
+            # Several genuinely distinct requests all matched the rule (a
+            # multi-stage attack, e.g. MSSQL's "enable xp_cmdshell" then
+            # "run xp_cmdshell") — report the union of what each one hits
+            # rather than arbitrarily picking one and losing the rest.
+            matched_item_count = len(item_index)
+            clauses = attack.rule_content_clauses(chosen.get("id"))
+            seen_locations = set()
+            for idx in item_index:
+                item_data = flow.items[idx].data
+                if endpoint is None:
+                    endpoint = attack.describe_endpoint(item_data)
+                if clauses:
+                    for v in attack.locate_vulnerable_input(item_data, clauses):
+                        key = (v["buffer"], v["location"])
+                        if key not in seen_locations:
+                            seen_locations.add(key)
+                            vulnerable_inputs.append(v)
+
+    src_ip = str(flow.ip_src)
+    dst_ip = str(flow.ip_dst)
+    dst_port = int(flow.port_dst)
+
+    text_lines = [
+        f"=== w4rya incident packet -- flow {flow.id} ===",
+        "Technique : " + classification["technique"]
+        + (f" ({classification['mitre']})" if classification.get("mitre") else ""),
+        f"Tactic    : {classification['tactic']}   Severity: {classification['severity']}",
+        f"Rule      : {chosen_message or '(no signature -- flag leak only)'}",
+        f"Source    : {src_ip}  ->  {dst_ip}:{dst_port}",
+        f"First seen: {stats['first_seen'] or '-'}    Last seen: {stats['last_seen'] or '-'}"
+        f"    Occurrences: {stats['occurrence_count']}",
+    ]
+    if matched_item_count:
+        text_lines.append(
+            f"Note      : rule matched {matched_item_count} distinct requests in this "
+            "session (e.g. a multi-stage attack) -- endpoint/inputs below are the union of all of them"
+        )
+    if endpoint:
+        text_lines.append(f"Endpoint  : {endpoint}")
+    if vulnerable_inputs:
+        text_lines.append("Vulnerable input(s):")
+        for v in vulnerable_inputs:
+            suffix = f' = "{v["value"]}"' if v["value"] is not None else ""
+            text_lines.append(f'  - {v["location"]}{suffix}')
+    text_lines += [
+        "",
+        "Remediation:",
+        f"  {classification['remediation']}",
+        "",
+        f"Captured payload ({len(payload)} bytes):",
+        payload[:2048].decode("latin-1", errors="replace"),
+    ]
+
+    return return_json_response({
+        "flow_id": str(flow.id),
+        "sid": chosen.get("id") if chosen else None,
+        "rule_message": chosen_message,
+        **classification,
+        "src_ip": src_ip,
+        "dst_ip": dst_ip,
+        "dst_port": dst_port,
+        "time": flow.time.isoformat(),
+        **stats,
+        "endpoint": endpoint,
+        "vulnerable_inputs": vulnerable_inputs,
+        "matched_item_count": matched_item_count,
+        "payload_size": len(payload),
+        "decoded_payload": decoded,
+        "text_packet": "\n".join(text_lines),
+    })
+
+
+@application.route("/attack/exploit-code/<flow_id>")
+def attack_exploit_code(flow_id):
+    """The "📋 Copy Exploit" button: readable Python for the flow — isolated
+    down to just the client item(s) that matched the firing rule when we
+    can tell, instead of every request in the whole captured session
+    (signup/signin/upload/... glued together, most of it irrelevant to the
+    actual attack — see attack.find_exploit_item's docstring). Usually one
+    item (`"basis": "single_item"`); occasionally a short list when several
+    genuinely distinct requests both mattered, e.g. a two-stage attack
+    (`"basis": "matched_items"`, see `attack.narrow_flow_to_items`). Falls
+    back to the full flow, clearly labeled `"basis": "full_flow"`, only when
+    isolation isn't possible at all (pcre/flowbit-only rule, zero matches,
+    or no signature at all).
+
+    Two code generators, picked by protocol (`"protocol"` in the response):
+    `data2req.py`'s `requests`-based generator for HTTP flows, or a plain
+    socket connect/send/recv script (`attack.raw_socket_snippet` /
+    `flow2pwn`) for anything else — a bare-TCP CTF service (no HTTP
+    framing) fed through the HTTP generator doesn't degrade, it raises
+    (`.lower()` on the `None` method `BaseHTTPRequestHandler` leaves after
+    failing to parse a non-HTTP request line). `is_http_request` gates
+    which path runs so this endpoint always returns runnable code instead
+    of a 500 the moment monitoring points it at a non-HTTP service.
+
+    `?sid=` picks which signature hit to isolate around, same as
+    /attack/incident; defaults to the highest-severity hit.
+    """
+    try:
+        fid = uuid.UUID(flow_id)
+    except ValueError:
+        return jsonify({"error": "invalid flow id"}), 400
+    with db.connection() as c:
+        flow = c.flow_detail(fid)
+    if not flow:
+        return jsonify({"error": "flow not found"}), 404
+
+    chosen, err = _choose_signature(flow, request.args.get("sid"))
+    if err:
+        return err
+
+    item_index, basis = attack.find_exploit_item(flow, chosen.get("id") if chosen else None)
+    client_items = [it for it in flow.items if it.direction == "c" and it.kind == "raw"]
+
+    try:
+        if basis == "single_item" and item_index is not None:
+            item_data = flow.items[item_index].data
+            if attack.is_http_request(item_data):
+                protocol = "http"
+                code = convert_single_http_requests(flow, item_index, True, True)
+            else:
+                protocol = "raw"
+                code = attack.raw_socket_snippet(item_data, int(flow.port_dst))
+        elif basis == "matched_items" and item_index:
+            # Several genuinely distinct requests all matched the rule —
+            # narrow the flow to just those instead of falling all the way
+            # back to every request in the session (see find_exploit_item).
+            narrowed = attack.narrow_flow_to_items(flow, item_index)
+            if all(attack.is_http_request(it.data) for it in narrowed.items):
+                protocol = "http"
+                code = convert_flow_to_http_requests(narrowed, True, True)
+            else:
+                protocol = "raw"
+                code = flow2pwn(narrowed)
+        elif client_items and all(attack.is_http_request(it.data) for it in client_items):
+            protocol = "http"
+            code = convert_flow_to_http_requests(flow, True, True)
+        else:
+            protocol = "raw"
+            code = flow2pwn(flow)
+    except Exception as ex:
+        return jsonify({"error": f"could not generate exploit code: {ex}"}), 500
+
+    # item_index is a position (or, for "matched_items", a list of
+    # positions) in the FULL items array (client+server interleaved) —
+    # convert to "request N of M" among client items only, which is what's
+    # actually meaningful to show an operator.
+    client_indices = [
+        i for i, it in enumerate(flow.items) if it.direction == "c" and it.kind == "raw"
+    ]
+    client_ordinal = (
+        client_indices.index(item_index) + 1
+        if basis == "single_item" and item_index is not None and item_index in client_indices
+        else None
+    )
+    matched_ordinals = (
+        [client_indices.index(i) + 1 for i in item_index if i in client_indices]
+        if basis == "matched_items" and item_index
+        else None
+    )
+
+    return return_json_response({
+        "flow_id": str(flow.id),
+        "sid": chosen.get("id") if chosen else None,
+        "basis": basis,
+        "protocol": protocol,
+        "item_index": item_index if basis == "single_item" else None,
+        "client_ordinal": client_ordinal,
+        "matched_ordinals": matched_ordinals,
+        "client_item_count": len(client_indices),
+        "code": code,
+    })
+
+
+def _parse_targets(targets_in) -> list[dict] | None:
+    """Shared target-list parsing for every replay route. Accepts either a
+    bare IP string or {"name","ip"} — the ad-hoc-target UI sends the latter
+    with a name of the operator's choosing, same shape as a configured team."""
+    if not isinstance(targets_in, list) or not targets_in:
+        return None
+    targets: list[dict] = []
+    for t in targets_in:
+        if isinstance(t, str):
+            targets.append({"name": t, "ip": t})
+        elif isinstance(t, dict) and t.get("ip"):
+            targets.append({
+                "name": str(t.get("name") or t["ip"]),
+                "ip": str(t["ip"]),
+            })
+    return targets
+
+
+def _parse_timeout(body: dict) -> float:
+    timeout = body.get("timeout")
+    try:
+        return float(timeout) if timeout is not None else attack.DEFAULT_TIMEOUT
+    except (TypeError, ValueError):
+        return attack.DEFAULT_TIMEOUT
+
+
+def _parse_port_override(body: dict) -> int | None:
+    """None means 'use the captured/saved port' — the normal case. Raises
+    ValueError for a present-but-invalid port so the caller can 400."""
+    port = body.get("port")
+    if port is None or port == "":
+        return None
+    port = int(port)
+    if not (0 < port < 65536):
+        raise ValueError("port out of range")
+    return port
+
+
+def _parse_payload_override(body: dict) -> bytes | None:
+    """The payload editor round-trips bytes through latin-1 text (a lossless
+    1:1 mapping for 0-255), so an operator can eyeball/tweak an HTTP request
+    without a hex editor. None means 'use the captured/saved payload'."""
+    text = body.get("payload_text")
+    if text is None:
+        return None
+    if not isinstance(text, str):
+        raise ValueError("payload_text must be a string")
+    return text.encode("latin-1", errors="replace")
+
+
+@application.route("/attack/payload/<flow_id>")
+def attack_payload(flow_id):
+    """The raw client payload as editable text, for the send-exploit panel's
+    payload editor — /attack/preview only gives sizes/counts, not bytes."""
+    try:
+        fid = uuid.UUID(flow_id)
+    except ValueError:
+        return jsonify({"error": "invalid flow id"}), 400
+    with db.connection() as c:
+        flow = c.flow_detail(fid)
+    if not flow:
+        return jsonify({"error": "flow not found"}), 404
+    payload = attack.build_payload(flow)
+    return return_json_response({
+        "flow_id": str(flow.id),
+        "port": int(flow.port_dst),
+        "payload_text": payload.decode("latin-1", errors="replace"),
     })
 
 
@@ -786,39 +1221,201 @@ def attack_replay():
     except (ValueError, TypeError):
         return jsonify({"error": "invalid flow id"}), 400
 
-    targets_in = body.get("targets")
-    if not isinstance(targets_in, list) or not targets_in:
+    targets = _parse_targets(body.get("targets"))
+    if targets is None:
         return jsonify({"error": "targets must be a non-empty list"}), 400
-
-    targets: list[dict] = []
-    for t in targets_in:
-        if isinstance(t, str):
-            targets.append({"name": t, "ip": t})
-        elif isinstance(t, dict) and t.get("ip"):
-            targets.append({
-                "name": str(t.get("name") or t["ip"]),
-                "ip": str(t["ip"]),
-            })
-
-    timeout = body.get("timeout")
+    timeout = _parse_timeout(body)
     try:
-        timeout = float(timeout) if timeout is not None else attack.DEFAULT_TIMEOUT
-    except (TypeError, ValueError):
-        timeout = attack.DEFAULT_TIMEOUT
+        port_override = _parse_port_override(body)
+        payload_override = _parse_payload_override(body)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
 
     with db.connection() as c:
         flow = c.flow_detail(fid)
     if not flow:
         return jsonify({"error": "flow not found"}), 404
 
-    result = attack.replay(flow, targets, timeout=timeout)
+    payload = payload_override if payload_override is not None else attack.build_payload(flow)
+    port = port_override if port_override is not None else int(flow.port_dst)
+    result = attack.replay_payload(
+        payload, port, targets, timeout=timeout, result_id=str(flow.id),
+        rewrite_host=(payload_override is None),
+    )
     audit.log(
         auth.current_user() or "?",
         "attack.replay",
         target=raw_flow_id,
-        details={"target_count": len(targets), "timeout": timeout},
+        details={
+            "target_count": len(targets), "timeout": timeout,
+            "port_overridden": port_override is not None,
+            "payload_overridden": payload_override is not None,
+        },
     )
     return return_json_response(result)
+
+
+# --- /exploits (saved exploit library) --------------------------------------
+#
+# A flow captured once (attack.replay/exploit-script) is one-shot: find it
+# again next tick to fire it again. Saving it here snapshots the client
+# payload + port at save time, so the attack team builds a growing,
+# named/tagged library instead of re-hunting the same flow every time they
+# want to reuse a technique someone else on the team already found.
+
+def _exploit_script_filename(name: str) -> str:
+    slug = re.sub(r"[^A-Za-z0-9_-]+", "_", name).strip("_")[:60]
+    return slug or "exploit"
+
+
+@application.route("/exploits")
+def list_exploits():
+    return return_json_response([e.to_dict() for e in exploits.list_all()])
+
+
+@application.route("/exploits/<id>")
+def get_exploit(id):
+    """Single exploit with its payload as editable text — the send-exploit
+    panel's payload editor fetches this before letting an operator tweak
+    a saved exploit's bytes for one specific replay."""
+    try:
+        eid = uuid.UUID(id)
+    except ValueError:
+        return jsonify({"error": "invalid id"}), 400
+    ex = exploits.get(eid)
+    if not ex:
+        return jsonify({"error": "not found"}), 404
+    d = ex.to_dict()
+    d["payload_text"] = ex.payload.decode("latin-1", errors="replace")
+    return return_json_response(d)
+
+
+@application.route("/exploits", methods=["POST"])
+@auth.requires_role("operator")
+def save_exploit():
+    body = request.get_json(silent=True) or {}
+    raw_flow_id = body.get("flow_id") or ""
+    try:
+        fid = uuid.UUID(raw_flow_id)
+    except (ValueError, TypeError):
+        return jsonify({"error": "invalid flow id"}), 400
+    with db.connection() as c:
+        flow = c.flow_detail(fid)
+    if not flow:
+        return jsonify({"error": "flow not found"}), 404
+
+    try:
+        port_override = _parse_port_override(body)
+        payload_override = _parse_payload_override(body)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    payload = payload_override if payload_override is not None else attack.build_payload(flow)
+    port = port_override if port_override is not None else int(flow.port_dst)
+
+    try:
+        ex = exploits.save(
+            name=str(body.get("name") or ""),
+            tag=str(body.get("tag") or ""),
+            source_flow_id=fid,
+            port=port,
+            payload=payload,
+            created_by=auth.current_user() or "?",
+            notes=str(body.get("notes") or ""),
+        )
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    checker_ips = set(app_config.get("checker_ips") or [])
+    audit.log(
+        auth.current_user() or "?", "exploits.save",
+        target=str(ex.id), details={
+            "name": ex.name, "source_flow_id": raw_flow_id,
+            "payload_edited": payload_override is not None,
+            "source_ip_was_checker": str(flow.ip_src) in checker_ips,
+        },
+    )
+    d = ex.to_dict()
+    d["source_ip_was_checker"] = str(flow.ip_src) in checker_ips
+    return return_json_response(d), 201
+
+
+@application.route("/exploits/<id>", methods=["DELETE"])
+@auth.requires_role("operator")
+def delete_exploit(id):
+    try:
+        eid = uuid.UUID(id)
+    except ValueError:
+        return jsonify({"error": "invalid id"}), 400
+    if not exploits.delete(eid):
+        return jsonify({"error": "not found"}), 404
+    audit.log(auth.current_user() or "?", "exploits.delete", target=id)
+    return jsonify({"ok": True})
+
+
+@application.route("/exploits/<id>/replay", methods=["POST"])
+@auth.requires_role("operator")
+def replay_exploit(id):
+    try:
+        eid = uuid.UUID(id)
+    except ValueError:
+        return jsonify({"error": "invalid id"}), 400
+    ex = exploits.get(eid)
+    if not ex:
+        return jsonify({"error": "not found"}), 404
+
+    body = request.get_json(silent=True) or {}
+    targets = _parse_targets(body.get("targets"))
+    if targets is None:
+        return jsonify({"error": "targets must be a non-empty list"}), 400
+    timeout = _parse_timeout(body)
+    try:
+        port_override = _parse_port_override(body)
+        payload_override = _parse_payload_override(body)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+
+    payload = payload_override if payload_override is not None else ex.payload
+    port = port_override if port_override is not None else ex.port
+    result = attack.replay_payload(
+        payload, port, targets, timeout=timeout, result_id=str(ex.id),
+        rewrite_host=(payload_override is None),
+    )
+    audit.log(
+        auth.current_user() or "?", "exploits.replay",
+        target=str(ex.id), details={
+            "target_count": len(targets), "timeout": timeout,
+            "port_overridden": port_override is not None,
+            "payload_overridden": payload_override is not None,
+        },
+    )
+    return return_json_response(result)
+
+
+@application.route("/exploits/<id>/exploit-script")
+def exploit_script(id):
+    try:
+        eid = uuid.UUID(id)
+    except ValueError:
+        return return_text_response("# error: invalid id"), 400
+    ex = exploits.get(eid)
+    if not ex:
+        return return_text_response("# error: not found"), 404
+
+    teams = app_config.get("teams") or []
+    try:
+        timeout = float(request.args.get("timeout", attack.DEFAULT_TIMEOUT))
+    except (TypeError, ValueError):
+        timeout = attack.DEFAULT_TIMEOUT
+    script = attack.generate_script_from_payload(
+        ex.payload, ex.port, str(ex.id), teams, timeout=timeout,
+    )
+    return Response(
+        script,
+        mimetype="text/x-python",
+        headers={
+            "Content-Disposition":
+                f'attachment; filename="w4rya_exploit_{_exploit_script_filename(ex.name)}.py"'
+        },
+    )
 
 
 # --- /audit (admin-only log) -----------------------------------------------
@@ -945,7 +1542,7 @@ def _maybe_autoreload() -> dict | None:
     if not app_config.get_fresh("rules_autoreload"):
         return None
     try:
-        return suricata_ctl.reload_rules()
+        return suricata_ctl.reload_rules(blocking=False)
     except FileNotFoundError as e:
         return {"error": str(e), "kind": "socket_missing"}
     except (OSError, ValueError) as e:
@@ -1155,6 +1752,36 @@ def getFlowDetail(id):
     return return_json_response(flow)
 
 
+@application.route("/flow/<id>/decode")
+def getFlowDecoded(id):
+    """Auto-decode every raw item in this flow (base64/hex/url/gzip/deflate,
+    recursively) — saves the monitoring team a manual round-trip through
+    CyberChef for the common case. Items with nothing decodable are omitted
+    rather than returned with an empty layer list."""
+    try:
+        id = uuid.UUID(id)
+    except ValueError:
+        return jsonify({"error": "invalid id"}), 400
+    with db.connection() as c:
+        flow = c.flow_detail(id)
+    if not flow:
+        return jsonify({"error": "flow not found"}), 404
+    out = []
+    for idx, item in enumerate(flow.items):
+        if item.kind != "raw":
+            continue
+        found = decode.decode_item(item.data)
+        if not found["whole"] and not found["embedded"]:
+            continue
+        out.append({
+            "item_index": idx,
+            "direction": item.direction,
+            "raw_size": len(item.data),
+            **found,
+        })
+    return return_json_response({"flow_id": str(flow.id), "items": out})
+
+
 @application.route("/to_single_python_request", methods=["POST"])
 def convertToSingleRequest():
     flow_id = request.args.get("id", "")
@@ -1294,6 +1921,8 @@ def create_app():
     notes.init_schema()
     audit.set_pool(db)
     audit.init_schema()
+    exploits.set_pool(db)
+    exploits.init_schema()
     return application
 
 if __name__ == "__main__":

@@ -350,11 +350,47 @@ TEMPLATES: list[dict] = [
         "raw": 'alert http any any -> any any (msg:"SQLi union select"; flow:to_server; content:"union"; nocase; content:"select"; nocase; pcre:"/union\\s+(all\\s+)?select/i"; metadata: tag sqli; rev:1;)',
     },
     {
-        "name": "alert: shell metachar in body (potential RCE)",
-        "raw": 'alert http any any -> any any (msg:"shell metachars in body"; flow:to_server; pcre:"/[;|&`$]/"; http_client_body; metadata: tag rce_candidate; rev:1;)',
+        "name": "alert: command injection pattern in body",
+        "raw": 'alert http any any -> any any (msg:"command injection pattern in body"; flow:to_server; http.request_body; pcre:"/(\\x3b|\\|\\||&&)\\s*(cat|ls|whoami|id|nc|curl|wget|bash|sh|python|perl)\\b/i"; metadata: tag cmdi; rev:1;)',
     },
     {
-        "name": "drop: known bad UA",
+        "name": "alert: command substitution syntax in body",
+        "raw": 'alert http any any -> any any (msg:"command substitution syntax in body"; flow:to_server; http.request_body; pcre:"/\\$\\([a-zA-Z0-9_ \\/.-]+\\)|`[a-zA-Z0-9_ \\/.-]+`/"; metadata: tag cmdi_substitution; rev:1;)',
+    },
+    {
+        "name": "drop: known bad UA (sqlmap)",
         "raw": 'drop http any any -> any any (msg:"bad UA: sqlmap"; flow:to_server; content:"sqlmap"; nocase; http_user_agent; metadata: tag blocked; rev:1;)',
+    },
+    {
+        "name": "alert: recon tool UA (nikto/gobuster/nmap/...)",
+        "raw": 'alert http any any -> any any (msg:"recon tool UA detected"; flow:to_server; http.user_agent; pcre:"/nikto|gobuster|dirbuster|nmap|masscan|whatweb|nuclei/i"; metadata: tag recon_tool; rev:1;)',
+    },
+    {
+        "name": "alert: NoSQL injection operator in JSON body",
+        "raw": 'alert http any any -> any any (msg:"NoSQL injection operator in JSON body"; flow:to_server; content:"application/json"; http_header; http.request_body; pcre:"/\\"\\$(ne|gt|lt|gte|lte|regex|where|exists)\\"\\s*:/"; metadata: tag nosqli; rev:1;)',
+    },
+    {
+        "name": "alert: possible XXE (DOCTYPE/ENTITY in body)",
+        "raw": 'alert http any any -> any any (msg:"possible XXE (DOCTYPE/ENTITY in body)"; flow:to_server; http.request_body; content:"<!ENTITY"; nocase; metadata: tag xxe; rev:1;)',
+    },
+    {
+        "name": "alert: SSRF to cloud metadata endpoint",
+        "raw": 'alert tcp any any -> any any (msg:"SSRF to cloud metadata endpoint"; flow:to_server; content:"169.254.169.254"; metadata: tag ssrf_metadata; rev:1;)',
+    },
+    {
+        "name": "alert: prototype pollution attempt (__proto__)",
+        "raw": 'alert http any any -> any any (msg:"prototype pollution attempt (__proto__ in body)"; flow:to_server; http.request_body; content:"__proto__"; metadata: tag proto_pollution; rev:1;)',
+    },
+    {
+        "name": "alert: Java deserialization magic bytes",
+        "raw": 'alert tcp any any -> any any (msg:"Java deserialization magic bytes"; flow:to_server; content:"|ac ed 00 05|"; metadata: tag java_deserialize; rev:1;)',
+    },
+    {
+        "name": "alert: possible open redirect param",
+        "raw": 'alert http any any -> any any (msg:"possible open redirect param"; flow:to_server; http.uri; pcre:"/[?&](url|redirect|next|return)=/i"; metadata: tag open_redirect; rev:1;)',
+    },
+    {
+        "name": "alert: Log4Shell JNDI lookup attempt",
+        "raw": 'alert http any any -> any any (msg:"Log4Shell JNDI lookup attempt"; flow:to_server; content:"jndi:"; nocase; metadata: tag log4shell; rev:1;)',
     },
 ]

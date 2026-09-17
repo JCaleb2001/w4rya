@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import json
 import re
 import uuid
 from contextlib import contextmanager
@@ -18,7 +19,9 @@ from psycopg import sql
 from psycopg.rows import class_row, dict_row
 
 import app_config
+import checker_detect
 import configurations
+import technique_map
 from json_util import JsonFactory
 
 
@@ -40,6 +43,12 @@ class FlowQuery:
     tags_include: list[str] = field(default_factory=list)
     tags_exclude: list[str] = field(default_factory=list)
     tag_intersection_and: bool = False
+    # Substring match (case-insensitive) against the source pcap's filename.
+    # Sidesteps the tick/time filter entirely — useful for a pcap whose own
+    # capture timestamp falls way outside the game's tick-0 anchor (e.g. a
+    # historical/test pcap loaded for detection testing), where no time
+    # window is going to surface it without knowing that offset in advance.
+    pcap_name: str | None = None
     limit: int = 1000
 
 
@@ -194,6 +203,10 @@ class Connection(psycopg.Connection):
             parameters["time_to"] = query.time_to
             conditions.append(sql.SQL("f.id < fid_pack_high(%(time_to)s)"))
             pre_conditions.append(sql.SQL("flow_id < fid_pack_high(%(time_to)s)"))
+
+        if query.pcap_name:
+            parameters["pcap_name"] = f"%{query.pcap_name}%"
+            conditions.append(sql.SQL("p.name ILIKE %(pcap_name)s"))
 
         if query.tags_include:
             parameters["tags_include"] = query.tags_include
@@ -389,12 +402,18 @@ class Connection(psycopg.Connection):
         services: list[dict],
         service_filter: str | None = None,
         limit: int = 200,
+        exclude_ips: set[str] | None = None,
     ) -> list[dict]:
         """Chronological list of attack-flavored events in the time window.
 
         An 'event' is any flow that either matched a Suricata signature OR
         leaked a flag (tag = flag-out). For each event we resolve the dst
         (ip, port) to the configured service name.
+
+        `exclude_ips`: confirmed checker/gameserver IPs (app_config's
+        `checker_ips`, set via /checker/candidates) — excluded in SQL,
+        before LIMIT, so a busy checker can't push real attacker events
+        out of the already-limited result set.
         """
         sql_query = """
             SELECT id, time,
@@ -406,13 +425,17 @@ class Connection(psycopg.Connection):
             WHERE (jsonb_array_length(signatures) > 0 OR tags ? 'flag-out')
               AND id > fid_pack_low(%(t0)s)
               AND id < fid_pack_high(%(t1)s)
+              AND NOT (host(ip_src) = ANY(%(exclude_ips)s::text[]))
             ORDER BY time DESC
             LIMIT %(limit)s
         """
         with self.cursor(row_factory=dict_row) as cursor:
             rows = cursor.execute(
                 sql_query,
-                {"t0": time_from, "t1": time_to, "limit": limit},
+                {
+                    "t0": time_from, "t1": time_to, "limit": limit,
+                    "exclude_ips": sorted(exclude_ips) if exclude_ips else [],
+                },
             ).fetchall()
 
         svc_by_key = {
@@ -436,6 +459,21 @@ class Connection(psycopg.Connection):
                 ev_type = "alert"
             else:
                 ev_type = "flag_out"
+            rules = [
+                {
+                    "id": s.get("id"),
+                    "message": s.get("message"),
+                    "action": s.get("action"),
+                    **technique_map.classify(s.get("message")),
+                }
+                for s in sigs
+            ]
+            # Highest-severity rule wins the event's headline tactic — the
+            # kill-chain view sorts/colors by this rather than by rule order,
+            # which is just "whichever rule Suricata evaluated first".
+            tactic, severity = technique_map.summarize(
+                rules, has_flag_only=has_flag and not has_alert
+            )
             out.append({
                 "flow_id": str(r["id"]),
                 "time": r["time"].isoformat(),
@@ -445,17 +483,82 @@ class Connection(psycopg.Connection):
                 "dst_port": int(r["port_dst"]),
                 "service": svc_name,
                 "type": ev_type,
-                "rules": [
-                    {
-                        "id": s.get("id"),
-                        "message": s.get("message"),
-                        "action": s.get("action"),
-                    }
-                    for s in sigs
-                ],
+                "tactic": tactic,
+                "severity": severity,
+                "rules": rules,
                 "flag_out_count": int(r["flags_out"] or 0) if has_flag else 0,
             })
         return out
+
+    def incident_stats(self, sid: int, src_ip: str) -> dict:
+        """First/last-seen + occurrence count for one (rule sid, src_ip) pair,
+        across the whole retained window — feeds the incident-packet builder
+        (webservice.attack_incident) so an alert reads as "this technique,
+        from this source, N times since <date>" instead of a single flow in
+        isolation.
+        """
+        sql_query = """
+            SELECT MIN(time) AS first_seen, MAX(time) AS last_seen, COUNT(*) AS occurrence_count
+            FROM flow
+            WHERE ip_src = %(src_ip)s::inet
+              AND signatures @> %(sig)s::jsonb
+        """
+        with self.cursor(row_factory=dict_row) as cursor:
+            row = cursor.execute(
+                sql_query,
+                {"src_ip": src_ip, "sig": json.dumps([{"id": sid}])},
+            ).fetchone()
+        if not row or not row["occurrence_count"]:
+            return {"first_seen": None, "last_seen": None, "occurrence_count": 0}
+        return {
+            "first_seen": row["first_seen"].isoformat() if row["first_seen"] else None,
+            "last_seen": row["last_seen"].isoformat() if row["last_seen"] else None,
+            "occurrence_count": int(row["occurrence_count"]),
+        }
+
+    def checker_candidates(
+        self,
+        time_from: datetime,
+        time_to: datetime,
+        total_known_ports: int,
+        exclude_ips: set[str] | None = None,
+        limit: int = 10,
+    ) -> list[dict]:
+        """Rank src_ips in the window by how checker-like their traffic
+        looks (see checker_detect.score_ip) — gathers per-ip timing/coverage/
+        signature stats in one grouped query and hands them to the scorer.
+        """
+        sql_query = """
+            SELECT ip_src::text AS ip_src,
+                   array_agg(time) AS times,
+                   array_agg(DISTINCT port_dst) AS ports,
+                   count(*) AS flow_count,
+                   count(*) FILTER (WHERE jsonb_array_length(signatures) > 0) AS alert_count
+            FROM flow
+            WHERE id > fid_pack_low(%(t0)s) AND id < fid_pack_high(%(t1)s)
+            GROUP BY ip_src
+        """
+        with self.cursor(row_factory=dict_row) as cursor:
+            rows = cursor.execute(
+                sql_query, {"t0": time_from, "t1": time_to}
+            ).fetchall()
+
+        exclude_ips = exclude_ips or set()
+        out: list[dict] = []
+        for r in rows:
+            ip_src = str(r["ip_src"]).split("/", 1)[0]
+            if ip_src in exclude_ips:
+                continue
+            scored = checker_detect.score_ip(
+                times=list(r["times"] or []),
+                distinct_dst_ports=set(r["ports"] or []),
+                flow_count=int(r["flow_count"] or 0),
+                alert_flow_count=int(r["alert_count"] or 0),
+                total_known_ports=total_known_ports,
+            )
+            out.append({"ip": ip_src, **scored})
+        out.sort(key=lambda x: x["confidence"], reverse=True)
+        return out[:limit]
 
     def per_service_stats(self, time_start: datetime, services: list[dict]) -> list[dict]:
         """Aggregate flow / attack / flag counts for each configured service.

@@ -13,6 +13,7 @@ for a given key — once the user PUTs a value, the DB wins forever.
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import os
 from ipaddress import ip_network
@@ -203,6 +204,18 @@ def validate_team(entry: Any) -> dict:
     if not ip:
         raise ValueError("team ip is required")
     return {"name": name, "ip": ip, "notes": notes}
+
+
+def validate_checker_ip(entry: Any) -> str:
+    """checker_ips is a plain list of IP strings, not objects — the human
+    confirmed these from /checker/candidates, there's nothing else to
+    record about them."""
+    ip = str(entry).strip()
+    try:
+        ipaddress.ip_address(ip)
+    except ValueError:
+        raise ValueError(f"invalid IP address: {ip!r}")
+    return ip
 
 
 # Allowed scalar config keys editable via PUT /config (the wide game form).
