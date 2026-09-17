@@ -5,6 +5,7 @@ export const SERVICE_FILTER_KEY = "service"; // legacy single-select (Corrie sti
 export const SERVICES_FILTER_KEY = "services"; // multi-select, comma-separated names
 export const START_FILTER_KEY = "start";
 export const END_FILTER_KEY = "end";
+export const PCAP_FILTER_KEY = "pcap"; // substring match on source pcap filename, bypasses the tick/time filter
 export const FIRST_DIFF_KEY = "first";
 export const SECOND_DIFF_KEY = "second";
 export const REPR_ID_KEY = "reprid";

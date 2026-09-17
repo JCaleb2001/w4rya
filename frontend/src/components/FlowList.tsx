@@ -14,6 +14,7 @@ import {
   TEXT_FILTER_KEY,
   START_FILTER_KEY,
   END_FILTER_KEY,
+  PCAP_FILTER_KEY,
   FLOW_LIST_REFETCH_INTERVAL_MS,
   FORCE_REFETCH_ON_STAR,
 } from "../const";
@@ -105,8 +106,17 @@ export function FlowList() {
   const text_filter = searchParams.get(TEXT_FILTER_KEY) ?? undefined;
   const from_filter = searchParams.get(START_FILTER_KEY) ?? undefined;
   const to_filter = searchParams.get(END_FILTER_KEY) ?? undefined;
+  const pcap_filter = searchParams.get(PCAP_FILTER_KEY) ?? undefined;
 
   const debounced_text_filter = useDebounce(text_filter, 300);
+  const debounced_pcap_filter = useDebounce(pcap_filter, 300);
+
+  function setPcapFilter(value: string) {
+    const sp = new URLSearchParams(searchParams);
+    if (value) sp.set(PCAP_FILTER_KEY, value);
+    else sp.delete(PCAP_FILTER_KEY);
+    setSearchParams(sp);
+  }
 
   const {
     data: flowData, error: flowQueryError,
@@ -116,8 +126,13 @@ export function FlowList() {
     {
       regex_insensitive: debounced_text_filter,
       service_names: selected_service_names.length > 0 ? selected_service_names : undefined,
-      time_from: from_filter ? new Date(parseInt(from_filter)).toISOString() : undefined,
-      time_to: to_filter ? new Date(parseInt(to_filter)).toISOString() : undefined,
+      pcap_name: debounced_pcap_filter,
+      // A pcap filter is usually reached for BECAUSE the time window can't
+      // find the flow (its capture date is way outside the tick-0 anchor —
+      // see PCAP_FILTER_KEY) — so ignore the time filter whenever pcap_name
+      // is set, rather than silently AND-ing two filters that fight each other.
+      time_from: (!debounced_pcap_filter && from_filter) ? new Date(parseInt(from_filter)).toISOString() : undefined,
+      time_to: (!debounced_pcap_filter && to_filter) ? new Date(parseInt(to_filter)).toISOString() : undefined,
       tags_include: includeTags,
       tags_exclude: excludeTags,
       tag_intersection_mode: tagIntersectionMode,
@@ -364,6 +379,25 @@ export function FlowList() {
                   })}
                 </div>
               )}
+            </div>
+
+            {/* pcap source filter */}
+            <div>
+              <div className="flex items-center mb-1.5">
+                <p className="text-[10px] uppercase tracking-[0.2em] font-bold text-hax-muted">
+                  ▎pcap source
+                </p>
+                <span className="ml-2 text-[10px] text-hax-dim normal-case">
+                  bypasses the from/to time filter
+                </span>
+              </div>
+              <input
+                type="text"
+                placeholder="filename substring, e.g. fastjson"
+                defaultValue={pcap_filter ?? ""}
+                onChange={(e) => setPcapFilter(e.target.value)}
+                className="w-full text-xs"
+              />
             </div>
 
             {/* tags intersection */}

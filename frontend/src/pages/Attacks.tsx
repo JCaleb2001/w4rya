@@ -171,6 +171,8 @@ function AttackRow({ ev }: { ev: AttackEvent }) {
                 </span>{" "}
                 <span className="text-hax-text">{r.message}</span>
                 <span className="text-hax-dim ml-1">#{r.id}</span>
+                <span className="text-hax-accent-bright ml-2">{r.technique}</span>
+                {r.mitre && <span className="text-hax-dim ml-1">({r.mitre})</span>}
               </div>
             ))}
           </div>

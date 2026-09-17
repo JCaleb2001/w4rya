@@ -139,8 +139,11 @@ suricata
 # runtime lock taken by user_store when writing users.yaml
 /auth/users.yaml.lock
 
-# suricata rules — local team operational state, not committed
+# suricata rules — local team operational state, not committed. Also covers
+# the nested et-open/ mirror (a ~44MB pulled-via-suricata-update ruleset —
+# regenerable, not something to carry in git history).
 /suricata-rules/*.rules
+/suricata-rules/et-open/*.rules
 
 # suricata runtime: command socket + pidfile, both runtime-only
 /suricata-run/*
@@ -157,3 +160,8 @@ suricata
 # from being committed by accident.
 /services/test_pcap/*.pcap
 /services/test_pcap/*.pcapng
+
+# Real CTF captures pulled from the vulnbox (scripts/pull_vulnbox_pcaps.sh)
+/services/vulnbox_pcap/*.pcap
+/services/vulnbox_pcap/*.pcapng
+/.vulnbox_pull_tmp/
