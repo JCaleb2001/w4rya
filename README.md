@@ -6,14 +6,18 @@
 
 It captures pcap traffic, ingests it into TimescaleDB, surfaces flows in a React UI, and (optionally) correlates Suricata alerts with the flows for tagging.
 
+See [CHANGELOG.md](./CHANGELOG.md) for what changed in each release.
+
 ## What differs from upstream Tulip
 
 - **One-command install** — `./install.sh` handles the whole setup, including creating your first admin account.
 - **Accounts and roles** — session auth with `viewer` / `operator` / `admin` tiers, a first-run wizard, and an admin Users page so each teammate signs in as themselves.
-- **Suricata rules from the UI** — create, edit, enable/disable and delete rules at `/rules`, with a quick "block this IP" button on any flow.
+- **Suricata rules from the UI** — create, edit, enable/disable and delete rules at `/rules`, with a quick "block this IP" button on any flow, ready-made rule packs for common web attack shapes, and ET Open ruleset support.
 - **Runtime config** — services, teams, flag format and tick length are edited at `/config` during the game; no rebuild.
-- **Exploit testing** — replay a captured flow against every configured team from the UI, and download a standalone farm script.
-- **Attack timeline, per-service stats, flag-leak alarm, per-flow notes, audit log, and a fullscreen war-room view.**
+- **Exploit isolation & replay** — "Copy Exploit" on a matched flow returns the exact request that fired the rule (not the whole session), respecting Suricata's buffer scoping; replay it against any team or an ad-hoc IP:port from the UI, or save it to a reusable exploit library.
+- **Incident Packets** — the endpoint, vulnerable input, and MITRE ATT&CK classification for a matched flow, so the patching team knows exactly what to fix without reading a raw byte dump.
+- **Checker detection** — ranks IPs by how checker-like their traffic looks, so the checker's own SLA traffic doesn't get mistaken for an attacker's.
+- **Attack timeline, Kill Chain view, per-service stats, flag-leak alarm, per-flow notes, decoded-payloads panel, audit log, and a fullscreen war-room view.**
 
 ## No-AI policy
 
@@ -173,6 +177,8 @@ Sessions with matched alerts are highlighted in the front-end and include which 
 ## Security
 
 Your `w4rya` instance will likely contain sensitive CTF information — flags stolen from your machines, attack payloads, internal IPs. Do not expose it to the internet. Run it on an internal network (e.g. behind a VPN) or behind authentication.
+
+Exploit replay does not restrict target IPs — by design, since it needs to reach arbitrary hosts on the CTF network — so any `operator` account can use it to reach whatever internal infrastructure the w4rya host itself can reach. Only grant `operator`/`admin` to teammates you trust with that.
 
 ## Contributing
 
