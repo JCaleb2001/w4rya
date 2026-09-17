@@ -79,3 +79,36 @@ def test_hide_noise_reaches_the_query(viewer, monkeypatch, webservice_mod):
 
     viewer.post("/query", json={})
     assert captured["ip_src_exclude"] == []
+
+
+def test_hide_noise_also_folds_in_confirmed_checker_ips(viewer, monkeypatch, webservice_mod):
+    """An operator confirming a checker IP via the Checker tab's suggestion
+    flow (checker_ips, distinct config key from noise_ips) shouldn't also
+    have to retype it into the noise_ips field to get it hidden from the
+    flow list -- both lists mean the same thing ("not an attacker") and
+    hide_noise should honor both."""
+    captured = {}
+
+    class _Conn:
+        def flow_query(self, q):
+            captured["ip_src_exclude"] = q.ip_src_exclude
+            return []
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    monkeypatch.setattr(webservice_mod, "db", type("D", (), {"connection": lambda s: _Conn()})())
+    monkeypatch.setattr(app_config, "get", lambda key, default=None: {
+        "noise_ips": "10.100.0.1",
+        "checker_ips": ["10.200.0.9"],
+        "services": [],
+    }.get(key, default))
+
+    viewer.post("/query", json={"hide_noise": True})
+    assert captured["ip_src_exclude"] == [
+        ip_network("10.100.0.1/32"),
+        ip_network("10.200.0.9/32"),
+    ]

@@ -394,9 +394,15 @@ def query():
             # The checker and our own tooling account for nearly all the
             # volume; hiding them is what leaves the traffic worth reading.
             # Resolved server-side so the frontend never has to know which ips
-            # count as noise.
+            # count as noise. Confirmed checker_ips (set via the Checker tab's
+            # candidate-suggestion flow, see /checker/candidates) is folded in
+            # here too, so confirming a checker there also hides it from the
+            # flow list — an operator shouldn't have to enter the same IP
+            # twice in two unrelated config fields to get consistent
+            # "not an attacker" treatment everywhere.
             ip_src_exclude=(
                 app_config.parse_noise_ips(app_config.get("noise_ips"))
+                + [ip_network(ip, strict=False) for ip in (app_config.get("checker_ips") or [])]
                 if query.get("hide_noise")
                 else []
             ),
