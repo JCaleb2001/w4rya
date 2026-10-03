@@ -46,8 +46,8 @@ DB schema change, no new container.
 - **Frontend:** a feature folder `frontend/src/features/vulnbox/`. Its endpoints
   are added to the single shared `w4ryaApi` slice via `injectEndpoints` (RTK
   Query code-splitting), not a second API. The feature declares its own
-  `"Vulnbox"` tag via `enhanceEndpoints({addTagTypes})`, so the base `api.ts` is
-  untouched.
+  `"Vulnbox"` tag via `enhanceEndpoints({addTagTypes})`, so the base `api.ts`
+  needs no new endpoints or tags.
 - **Dependency direction (one way):** `routes → jobs → {recon, backup, preflight} → ssh → keys → config`.
   `config.py` holds paths, timeouts and validators used by all of them.
 
@@ -171,5 +171,6 @@ Each came out of verifying against the real code or tools, not a change of scope
 - `team_id` 0 is rejected instead of deriving `10.60.0.2`.
 - The fingerprint is computed in-process (the overview is polled), pinned by a test to `ssh-keygen -lf`.
 - Local git uses `-c safe.directory=*` (verified: plain git refuses a host-owned bind mount when it runs as root).
-- The base `api.ts` is untouched (`enhanceEndpoints({addTagTypes})`).
+- The base `api.ts` needs no new endpoints or tags (`enhanceEndpoints({addTagTypes})`); it only gains the four optional `vulnbox_*` fields on `GameConfig`, so the Config page's Game form can edit them (found in the final review: they were returned by `GET /config` but not editable in the UI).
+- Jobs and key generation answer 503 with a message when `./vulnbox-data` is missing or read-only, instead of a 500.
 - `scripts/backup.sh` also saves `vulnbox-data/keys/`.

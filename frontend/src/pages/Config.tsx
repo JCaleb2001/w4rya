@@ -98,6 +98,13 @@ function GameForm({ canEdit }: { canEdit: boolean }) {
       label: "extra noise ips (our own tooling, etc — comma separated)",
       note: "confirmed checker IPs from the Checker tab are hidden automatically, no need to also list them here",
     },
+    vulnbox_ip: {
+      label: "vulnbox ip override (optional)",
+      note: "empty = 10.60.<team id>.2 — used by /vulnbox",
+    },
+    vulnbox_user: { label: "vulnbox ssh user" },
+    vulnbox_ssh_port: { label: "vulnbox ssh port", type: "number" },
+    vulnbox_services_path: { label: "vulnbox services path" },
   };
 
   return (
