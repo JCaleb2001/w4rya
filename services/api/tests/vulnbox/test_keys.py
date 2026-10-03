@@ -39,6 +39,21 @@ def test_status_never_leaks_private_material(vbox_dir):
     assert priv_bytes not in blob
 
 
+def test_fingerprint_matches_ssh_keygen(vbox_dir):
+    """The in-process fingerprint must equal what ssh-keygen -lf prints —
+    it's what operators compare against the platform."""
+    import subprocess
+    s = keys.generate()
+    out = subprocess.run(["ssh-keygen", "-lf", str(keys.private_key_path()) + ".pub"],
+                         capture_output=True, text=True, check=True).stdout
+    assert s["fingerprint"] in out.split()
+
+
+def test_fingerprint_of_garbage_is_none():
+    assert keys.fingerprint("") is None
+    assert keys.fingerprint("ssh-ed25519 not-base64!!") is None
+
+
 def test_generate_refuses_overwrite_without_rotate(vbox_dir):
     keys.generate()
     with pytest.raises(ValueError):
