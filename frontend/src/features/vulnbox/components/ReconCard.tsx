@@ -6,8 +6,9 @@ import { BTN, BTN_PRIMARY, Card, ErrorLine, JobLine, OkLine, errorText } from ".
 /**
  * Step 3 — which services run on the vulnbox and on which ports. Service
  * ports (the configured vulnbox_service_ports ranges — the ports other teams
- * reach) can be imported into /config → services in one click; nothing
- * already there is deleted.
+ * reach) can be imported into /config → services in one click. Import only
+ * adds: an address already there keeps its name and notes, and nothing is
+ * deleted.
  */
 export function ReconCard({
   job,
@@ -37,7 +38,7 @@ export function ReconCard({
     setOk(null);
     try {
       const res = await importServices().unwrap();
-      setOk(`imported into /config: ${res.added} added, ${res.updated} updated`);
+      setOk(`imported into /config: ${res.added} added, ${res.kept} already there`);
     } catch (err) {
       setError(errorText(err, "could not import the services"));
     }

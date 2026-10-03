@@ -91,30 +91,43 @@ def build(parsed: dict, services_path: str,
 
 
 def to_config_services(services: list[dict], host: str) -> list[dict]:
-    """Recon rows → /config services entries, one per service port."""
-    return [
-        {"name": s["name"], "ip": host, "port": p, "notes": "imported from recon"}
-        for s in services
-        for p in s["service_ports"]
-    ]
+    """Recon rows → /config services entries, one per service port. A service
+    with several ports names each entry `name/port`: the /query services
+    filter looks entries up by name, so a shared name would leave all but one
+    of the ports unreachable."""
+    entries = []
+    for s in services:
+        ports = s["service_ports"]
+        for p in ports:
+            name = s["name"] if len(ports) == 1 else f"{s['name']}/{p}"
+            entries.append({"name": name, "ip": host, "port": p, "notes": "imported from recon"})
+    return entries
 
 
 def merge_services(existing: list[dict], imported: list[dict]) -> tuple[list[dict], int, int]:
-    """Upsert by (ip, port). Never deletes: entries recon didn't see stay put.
-    Returns (merged, added, updated)."""
-    index = {(e.get("ip"), e.get("port")): i for i, e in enumerate(existing)}
+    """Add each imported entry whose (ip, port) isn't configured yet.
+
+    Existing entries are never changed or removed: their names and notes may
+    have been edited by hand. An imported name another address already uses
+    gets a numeric suffix, so names stay unique. Returns (merged, added, kept),
+    `kept` counting the imported addresses that were already there.
+    """
     merged = [dict(e) for e in existing]
-    added = updated = 0
+    addresses = {(e.get("ip"), e.get("port")) for e in existing}
+    names = {e.get("name") for e in existing}
+    added = kept = 0
     for entry in imported:
-        key = (entry["ip"], entry["port"])
-        if key in index:
-            merged[index[key]] = dict(entry)
-            updated += 1
-        else:
-            index[key] = len(merged)
-            merged.append(dict(entry))
-            added += 1
-    return merged, added, updated
+        if (entry["ip"], entry["port"]) in addresses:
+            kept += 1
+            continue
+        name, n = entry["name"], 2
+        while name in names:
+            name, n = f"{entry['name']}-{n}", n + 1
+        merged.append({**entry, "name": name})
+        addresses.add((entry["ip"], entry["port"]))
+        names.add(name)
+        added += 1
+    return merged, added, kept
 
 
 def run(target: config.Target, service_ports: config.PortRanges = ()) -> dict:

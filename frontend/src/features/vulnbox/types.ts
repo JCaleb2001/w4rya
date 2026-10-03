@@ -77,7 +77,8 @@ export interface BackupService {
   commit: string;
   files: number;
   detail: string;
-  skipped: { path: string; bytes: number }[];
+  /** Left out of the snapshot: files over the size cap, nested git checkouts. */
+  skipped: { path: string; bytes: number; reason: string }[];
   local: LocalStatus;
   local_detail: string;
 }
@@ -114,7 +115,8 @@ export interface PresetInfo {
 export interface ImportResult {
   services: Service[];
   added: number;
-  updated: number;
+  /** Imported addresses already in /config; those entries are left as they were. */
+  kept: number;
 }
 
 export interface PresetResult {

@@ -14,7 +14,7 @@ decorator, and every gated route is listed in tests/test_routes_roles.py.
 | POST   /vulnbox/preflight          | operator | background job
 | POST   /vulnbox/recon              | operator | background job
 | POST   /vulnbox/backup             | operator | background job
-| POST   /vulnbox/import-services    | admin    | last recon → /config services
+| POST   /vulnbox/import-services    | admin    | last recon → /config services (add-only)
 | POST   /vulnbox/presets/<id>       | admin    | apply a game preset → /config
 """
 
@@ -192,16 +192,25 @@ def run_backup():
 @bp.route("/import-services", methods=["POST"])
 @auth.requires_role("admin")
 def import_services():
-    """Upsert the last recon's service ports into /config → services."""
+    """Add the last recon's service ports to /config → services. Entries
+    already there are left exactly as they are."""
     last = jobs.snapshot()["last"].get("recon")
     if not last or last.get("state") != "done":
         return jsonify({"error": "run recon first"}), 409
     result = last["result"]
-    imported = recon.to_config_services(result["services"], result["host"])
+    host = result["host"]
+    if not config.is_ip(host):
+        # The services filter matches flows by ip; a hostname matches nothing.
+        return jsonify({"error": f"vm_ip is a hostname ({host}): set it to the vulnbox's "
+                                 "ip address in /config, then run recon again"}), 400
+    imported = recon.to_config_services(result["services"], host)
     if not imported:
         return jsonify({"error": "recon found no published service port "
                                  "(see vulnbox_service_ports in /config)"}), 400
-    merged, added, updated = recon.merge_services(app_config.get("services") or [], imported)
+    # Fresh, not cached: another worker may have saved services seconds ago,
+    # and writing back a stale copy would undo that edit.
+    existing = app_config.get_fresh("services") or []
+    merged, added, kept = recon.merge_services(existing, imported)
     try:
         validated = [app_config.validate_service(e) for e in merged]
         _save_config("services", validated)
@@ -210,8 +219,8 @@ def import_services():
     except RuntimeError as e:
         return jsonify({"error": str(e)}), 503
     audit.log(_actor(), "vulnbox.import_services",
-              details={"added": added, "updated": updated})
-    return jsonify({"services": validated, "added": added, "updated": updated})
+              details={"added": added, "kept": kept})
+    return jsonify({"services": validated, "added": added, "kept": kept})
 
 
 @bp.route("/presets/<preset_id>", methods=["POST"])

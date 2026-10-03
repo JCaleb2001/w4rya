@@ -66,7 +66,9 @@ DEFAULTS: dict[str, Any] = {
     "tick_length": int(os.environ.get("TICK_LENGTH") or 180000),
     "start_date": os.environ.get("TICK_START", "2024-11-30T13:00:00Z"),
     "flag_lifetime": int(os.environ.get("FLAG_LIFETIME") or 5),
-    "vm_ip": os.environ.get("VM_IP", "10.10.3.1"),
+    # No placeholder: this is the /vulnbox ssh target, and an unset address
+    # must read as unset rather than send ssh to a made-up host.
+    "vm_ip": os.environ.get("VM_IP", ""),
     "team_id": os.environ.get("TEAM_ID", "0"),
     "visualizer_url": os.environ.get("VISUALIZER_URL", ""),
     "bpf": os.environ.get("BPF", ""),

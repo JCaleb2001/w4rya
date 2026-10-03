@@ -202,23 +202,54 @@ def test_import_needs_a_finished_recon(admin):
     assert admin.post("/vulnbox/import-services").status_code == 409
 
 
-def test_import_upserts_recon_service_ports(admin, vm_ip, monkeypatch, recorded_sets, audit_calls):
+def fake_recon(monkeypatch, *service_ports):
     monkeypatch.setattr(recon, "run", lambda t, ports: {
-        "services": [{"name": "notes", "ports": [10001, 5432], "service_ports": [10001],
-                      "containers": []}],
+        "services": [{"name": "notes", "ports": [*service_ports, 5432],
+                      "service_ports": list(service_ports), "containers": []}],
         "notes": [],
     })
+
+
+def test_import_adds_recon_service_ports(admin, vm_ip, monkeypatch, recorded_sets, audit_calls):
+    fake_recon(monkeypatch, 10001)
     assert admin.post("/vulnbox/recon").status_code == 202
     wait_job(admin)
     resp = admin.post("/vulnbox/import-services")
     assert resp.status_code == 200
     body = resp.get_json()
-    assert body["added"] + body["updated"] == 1
+    assert (body["added"], body["kept"]) == (1, 0)
     key, saved = recorded_sets[-1]
     assert key == "services"
     assert {"name": "notes", "ip": "192.0.2.10", "port": 10001,
             "notes": "imported from recon"} in saved
     assert "vulnbox.import_services" in audit_calls
+
+
+def test_import_refuses_a_hostname_target(admin, monkeypatch, recorded_sets):
+    """The services filter matches flows by ip: entries holding a hostname
+    would match nothing."""
+    set_config(monkeypatch, vm_ip="vulnbox.example")
+    fake_recon(monkeypatch, 10001)
+    admin.post("/vulnbox/recon")
+    wait_job(admin)
+    resp = admin.post("/vulnbox/import-services")
+    assert resp.status_code == 400
+    assert "ip" in resp.get_json()["error"]
+    assert recorded_sets == []
+
+
+def test_import_reads_services_fresh_not_from_the_cache(admin, vm_ip, monkeypatch, recorded_sets):
+    """Another worker may have saved /config → services seconds ago; writing
+    back this worker's cached copy would silently undo that edit."""
+    fake_recon(monkeypatch, 10001)
+    admin.post("/vulnbox/recon")
+    wait_job(admin)
+    just_saved = {"name": "manual", "ip": "198.51.100.7", "port": 80, "notes": ""}
+    set_config(monkeypatch, services=[just_saved])          # what the database holds
+    app_config._cache["services"] = (time.time(), [])       # this worker's stale copy
+    assert admin.post("/vulnbox/import-services").status_code == 200
+    _, saved = recorded_sets[-1]
+    assert just_saved in saved
 
 
 def test_apply_preset_writes_its_values_and_returns_env_lines(admin, test_preset,

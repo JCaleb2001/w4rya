@@ -75,13 +75,17 @@ export function BackupCard({
                 <td className={`py-1 pr-2 ${STATUS[s.status].cls}`} title={s.detail || undefined}>
                   {STATUS[s.status].label}
                 </td>
-                <td className="py-1 pr-2 text-hax-muted">{s.commit || "—"}</td>
+                <td className="py-1 pr-2 text-hax-muted" title={s.commit || undefined}>
+                  {s.commit ? s.commit.slice(0, 7) : "—"}
+                </td>
                 <td className="py-1 pr-2 text-right text-hax-muted">
                   {s.files}
                   {s.skipped.length > 0 && (
                     <span
                       className="ml-1 text-hax-warning"
-                      title={s.skipped.map((f) => `${f.path} (${f.bytes} B)`).join("\n")}
+                      title={s.skipped
+                        .map((f) => `${f.path}: ${f.reason}${f.bytes ? ` (${f.bytes} B)` : ""}`)
+                        .join("\n")}
                     >
                       +{s.skipped.length} skipped
                     </span>

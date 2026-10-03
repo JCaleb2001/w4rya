@@ -129,6 +129,14 @@ def resolve_host(raw) -> str:
     return host
 
 
+def is_ip(host: str) -> bool:
+    try:
+        ipaddress.ip_address(host)
+        return True
+    except ValueError:
+        return False
+
+
 def is_ipv6(host: str) -> bool:
     try:
         return ipaddress.ip_address(host).version == 6

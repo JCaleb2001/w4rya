@@ -67,27 +67,44 @@ def test_port_range_expansion_is_capped():
 def test_to_config_services_is_valid_config():
     out = recon.build(recon.parse(SAMPLE), TARGET.services_path, RANGES)
     entries = recon.to_config_services(out["services"], TARGET.host)
-    assert {(e["name"], e["port"]) for e in entries} == {("notes", 9001), ("shop", 9100), ("shop", 9101)}
     for e in entries:
         assert app_config.validate_service(e) == e  # round-trips the existing validator
         assert e["ip"] == "192.0.2.10"
 
 
-def test_merge_replaces_same_ip_port_and_keeps_others():
-    existing = [
-        {"name": "old", "ip": "192.0.2.10", "port": 9001, "notes": ""},
-        {"name": "manual", "ip": "192.0.2.10", "port": 9500, "notes": "keep me"},
-    ]
-    imported = [
-        {"name": "notes", "ip": "192.0.2.10", "port": 9001, "notes": "imported from recon"},
-        {"name": "shop", "ip": "192.0.2.10", "port": 9100, "notes": "imported from recon"},
-    ]
-    merged, added, updated = recon.merge_services(existing, imported)
-    by_port = {e["port"]: e for e in merged}
-    assert by_port[9001]["name"] == "notes"   # replaced
-    assert by_port[9500]["name"] == "manual"  # untouched
-    assert by_port[9100]["name"] == "shop"    # appended
-    assert (added, updated) == (1, 1)
+def test_a_service_with_several_ports_gets_one_uniquely_named_entry_per_port():
+    """The /query services filter looks entries up by name: two entries named
+    "shop" would leave one of its ports unreachable."""
+    out = recon.build(recon.parse(SAMPLE), TARGET.services_path, RANGES)
+    entries = recon.to_config_services(out["services"], TARGET.host)
+    assert {(e["name"], e["port"]) for e in entries} == {
+        ("notes", 9001), ("shop/9100", 9100), ("shop/9101", 9101)}
+
+
+HOST = "192.0.2.10"
+
+
+def entry(name, port, ip=HOST, notes=""):
+    return {"name": name, "ip": ip, "port": port, "notes": notes}
+
+
+def test_merge_only_adds_and_never_touches_existing_entries():
+    existing = [entry("notes (patched)", 9001, notes="hand-edited, keep me"),
+                entry("manual", 9500)]
+    imported = [entry("notes", 9001, notes="imported from recon"),
+                entry("shop", 9100, notes="imported from recon")]
+    merged, added, kept = recon.merge_services(existing, imported)
+    assert merged[:2] == existing      # unchanged, same order
+    assert merged[2] == imported[1]    # only the new address is added
+    assert (added, kept) == (1, 1)
+
+
+def test_merge_keeps_names_unique():
+    existing = [entry("shop", 80, ip="198.51.100.7")]  # same name, other address
+    imported = [entry("shop", 9100), entry("shop", 9200)]
+    merged, added, _ = recon.merge_services(existing, imported)
+    assert [e["name"] for e in merged] == ["shop", "shop-2", "shop-3"]
+    assert added == 2
 
 
 def test_run_without_key_errors_without_ssh(vbox_dir, monkeypatch):

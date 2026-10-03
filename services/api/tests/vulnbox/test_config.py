@@ -27,6 +27,15 @@ def test_resolve_host_rejects_junk(raw):
         vconfig.resolve_host(raw)
 
 
+@pytest.mark.skipif("VM_IP" in os.environ, reason="this environment sets VM_IP")
+def test_vm_ip_has_no_placeholder_default():
+    """Unset means unset: /vulnbox then says what to configure instead of
+    connecting to a made-up address that may be another team's box."""
+    assert app_config.DEFAULTS["vm_ip"] == ""
+    with pytest.raises(ValueError, match="vm_ip"):
+        vconfig.resolve_host(app_config.DEFAULTS["vm_ip"])
+
+
 def test_is_ipv6():
     assert vconfig.is_ipv6("2001:db8::2")
     assert not vconfig.is_ipv6("192.0.2.10")
@@ -165,3 +174,8 @@ def test_usernames_cannot_start_like_an_option(raw):
 def test_hostnames_cannot_start_like_an_option(raw):
     with pytest.raises(ValueError):
         vconfig.resolve_host(raw)
+
+
+def test_is_ip():
+    assert vconfig.is_ip("192.0.2.10") and vconfig.is_ip("2001:db8::2")
+    assert not vconfig.is_ip("vulnbox.example")
