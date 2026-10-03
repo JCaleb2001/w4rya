@@ -91,6 +91,22 @@ in the UI while the game runs — no rebuild.
 > at boot, so changing those in the UI reaches the API immediately but not the
 > assembler. Run `docker compose restart assembler` after changing them.
 
+### Vulnbox (key, preflight, recon, backup)
+
+**/vulnbox** gets our own vulnbox ready, in game-day order:
+
+1. **SSH key**: generate it, then paste the public key into the A/D platform. The
+   private key is download-only and never shown on screen.
+2. **Preflight**: a read-only check that the VPN, the ssh login and the box's tools
+   are all good.
+3. **Recon**: lists the services and their ports. Import the game ones (9000–9999)
+   into `/config` with one click.
+4. **Backup**: a git baseline of every service, then snapshots. The copies land in
+   `./vulnbox-data/backups/`.
+
+Set your team id in `/config` first: the vulnbox address is `10.60.<team id>.2`
+unless you override it there. Details: `services/api/vulnbox/README.md`.
+
 ## Manual start
 
 If you would rather not use the installer:

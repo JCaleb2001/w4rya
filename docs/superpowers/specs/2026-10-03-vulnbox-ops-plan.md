@@ -147,3 +147,12 @@ Checked the real integration points; findings folded back into the tasks:
 - Types consistent: `resolve_host`, result dicts, config services shape reused across tasks. ✓
 - Review-focus inputs each have a test (T3 hostile name, T8 key-leak + 409, T4 reachability split, T1 host derivation). ✓
 - Proportion: 11 tasks for an 9-section spec — reasonable. ✓
+
+## Execution notes
+
+Executed in task order with a red/green test cycle per module. Deviations from the
+tasks above are recorded in the spec's §10. Verification: full api suite green
+(`pytest tests/`, which runs the real remote scripts with bash and a real local
+git clone; only the ssh hop is faked), `tsc --noEmit` clean, `vite build` OK, and
+the page rendered in a real browser against the real api. Not yet verified: a run
+against a real vulnbox over ssh — do that in the Demo 2 slot.
