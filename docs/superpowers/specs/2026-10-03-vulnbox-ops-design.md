@@ -74,9 +74,11 @@ vulnbox-data/
   job.lock            # flock — one job at a time
 ```
 
-Every file we create follows `user_store._write_atomic`: written atomically,
-`chmod`ed to the right mode, then `chown`ed to the bind-mount directory's owner. That
-way the root-running container never leaves root-owned files on the host.
+Every file we create follows `user_store._write_atomic`: written atomically and
+`chmod`ed to the right mode. One helper, `config.own()`, then hands it to the data
+directory's owner, and the same goes for the directories `ensure_dir` creates and for
+the backup clones. That way the root-running container never leaves root-owned files
+on the host.
 
 ### 3.2 On the vulnbox
 
@@ -137,8 +139,13 @@ skipped.
 - `POST /vulnbox/recon` (background) lists the directories under
   `vulnbox_services_path` and maps containers to their published ports. Each result
   row is `{name, ports, service_ports, containers}`.
-- `POST /vulnbox/import-services` (admin) upserts the service ports into
-  `/config → services` by (ip, port), and never deletes an entry. Audited.
+- `POST /vulnbox/import-services` (admin) adds the service ports to
+  `/config → services`, one entry per port. It is add-only by (ip, port): an address
+  already there keeps its hand-edited name and notes, and nothing is deleted. Names
+  stay unique (`<service>/<port>` for a multi-port service, then `-2`, `-3`…), because
+  the `/query` services filter looks entries up by name. The target must be an ip,
+  because that filter matches flows by ip. Audited; responds
+  `{services, added, kept}`.
 
 ### 4.4 Backup (operator)
 
@@ -146,11 +153,14 @@ skipped.
 
 1. Ensure the bare repo exists. Creating it on the first run makes that run the
    baseline.
-2. Commit the current tree.
-3. Clone or fast-forward pull into `vulnbox-data/backups/<service>/`.
+2. Commit the current tree: every file, including those the service's own
+   `.gitignore` hides. Files over the size cap and nested git checkouts are left out
+   and reported, with the reason.
+3. Clone or fast-forward pull into `vulnbox-data/backups/<service>/`, until the clone's
+   HEAD is the box's commit.
 
-Files over the size cap are skipped and reported. Each result row is
-`{name, status: created|updated|unchanged|error, commit, files, skipped, local}`.
+Each result row is `{name, status: created|updated|unchanged|error, commit, files,
+skipped: [{path, bytes, reason}], local}`, where `commit` is the full hash.
 
 ### 4.5 Game presets (admin)
 
@@ -186,7 +196,8 @@ preset can never hold a value `/config` would reject.
    `ConnectTimeout` — never `StrictHostKeyChecking=no`.
 3. Service names are validated against `^[A-Za-z0-9._-]+$` before use in any path or
    command. SSH/git args are argv lists (no `shell=True`), and remote args are
-   `shlex.quote`d.
+   `shlex.quote`d. ssh ends its options with `--`, and an ssh user or hostname can't
+   start with `-` or `.`, so neither can be read as an option.
 4. `authorized_keys` is never written; keys the organizers installed stay.
 5. Every mutating route is audited, and every route sits behind the existing session
    and role guards.
@@ -253,6 +264,21 @@ Each one came out of checking against the real code or tools:
 - **Clear 503 for an unusable data dir.** Jobs and key generation answer 503 with a
   message when `./vulnbox-data` is missing or read-only.
 - **Backups save the key.** `scripts/backup.sh` also saves `vulnbox-data/keys/`.
+- **What a snapshot holds.** `add -f` plus `:(exclude,literal)` pathspecs for the files
+  over the cap and for nested checkouts, which are also unstaged in case an earlier
+  snapshot holds them. `info/exclude` was dropped: it never applies to tracked files,
+  so a file that grew past the cap kept being committed in full.
+- **The mirror compares HEADs.** It pulls whenever its HEAD differs from the box's
+  commit, so a pull that failed once is retried. It re-points `origin` at the current
+  target first, and clones into a temporary directory that is renamed into place.
+- **A longer limit for backups.** `BACKUP_TIMEOUT` (15 min) for the remote script and
+  for git; quick checks keep `RUN_TIMEOUT` (2 min).
+- **Remote scripts end with `exit 0`.** Records carry the outcome; a non-zero exit
+  means the ssh hop failed.
+- **No placeholder `vm_ip`.** `VM_IP` is empty in `.env.example` and the default is
+  `""`, so an unset address reads as unset.
+- **Imported services are read fresh.** The import reads `services` with
+  `app_config.get_fresh`, so it never writes back another worker's stale copy.
 - **Game-agnostic by construction:**
   - the ssh target is the existing `vm_ip` (no host derivation);
   - service ports are a setting;

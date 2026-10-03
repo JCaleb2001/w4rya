@@ -35,9 +35,9 @@ here is specific to one A/D game: what differs per game is configuration in
 ## Setup (once per game)
 
 1. **Point it at the vulnbox.** In `/config → game`, set **our team vm ip** (`vm_ip`)
-   to the vulnbox's address.
-   > Out of the box this is the `VM_IP` placeholder from `.env`, not a real
-   > address. Until you change it, the module happily targets the wrong host.
+   to the vulnbox's address. It starts empty, and until it is set the page says so
+   and no job runs. Use the ip address rather than a hostname if you want to import
+   services (see Recon below).
 
    If the game differs from the defaults, also set the **ssh user**, **ssh port**,
    **services path** and **service ports**. See [Settings](#settings).
@@ -64,7 +64,7 @@ The cards are ordered by the phase of the game they belong to:
 |---|---|---|
 | before the game | **SSH key** | generate the key and submit the public half (setup step 3) |
 | once the box is up | **Preflight** | run it. Read-only, in dependency order: key → host reachable (VPN) → ssh login → services path / git / docker. It stops at the first broken link and says why |
-| at game start | **Recon** | run it, check the table, then *import into /config* (admin): the service ports become `/config → services` entries (upsert by ip + port; nothing is deleted) |
+| at game start | **Recon** | run it, check the table, then *import into /config* (admin): each service port becomes a `/config → services` entry, named after the service directory (`<service>/<port>` when a service has several). Import only adds: an ip + port already there keeps its name and notes, nothing is deleted, and names stay unique. It needs `vm_ip` to be an ip, because the services filter matches flows by ip |
 | before the network opens | **Backup** | run it **while only our team can reach the box** — the first run is the **baseline**, the original code. Run it again after each patch; later runs commit only what changed |
 
 Only one job runs at a time. The buttons are disabled while one runs, and a second
@@ -77,7 +77,7 @@ All in `/config → game`, stored in the database:
 
 | setting | default | format / meaning |
 |---|---|---|
-| our team vm ip (`vm_ip`) | `VM_IP` from `.env` | ip (v4 or v6) or hostname — the ssh target |
+| our team vm ip (`vm_ip`) | `VM_IP` from `.env` (empty) | ip (v4 or v6) or hostname — the ssh target. Importing services needs an ip |
 | `vulnbox_user` | `root` | ssh user |
 | `vulnbox_ssh_port` | `22` | 1–65535 |
 | `vulnbox_services_path` | `/root/services` | absolute path; one directory per service under it |
@@ -166,19 +166,33 @@ git --git-dir ~/.w4rya-backups/<service>.git --work-tree <services_path>/<servic
 That overwrites the file on the box. Restart the service afterwards, at a moment
 when the checker isn't running if the game has one.
 
-Files larger than 25 MiB are left out of backups. The Backup card shows them as
-"+N skipped", with the list on hover.
+A snapshot holds every file in the service directory, including the ones its own
+`.gitignore` hides (an `.env`, a database): those are what a restore needs. Two
+kinds of path are left out, and the Backup card shows them as "+N skipped", with
+each path and the reason on hover:
+- files larger than 25 MiB. A file that grows past that leaves the snapshot from
+  then on;
+- nested git checkouts (a directory below the service with its own `.git`). git
+  can only record those as a link to a commit, not their files, so copy them
+  separately if they matter.
+
+Every run brings the local clone up to the box's newest snapshot, including one
+an earlier run failed to pull, and pulls from the current `vm_ip`.
 
 ## Troubleshooting
 
 | message | cause | fix |
 |---|---|---|
 | set our team's vulnbox address (vm_ip) | `vm_ip` empty | set it in `/config → game` |
-| cannot reach `<ip>`:`<port>` — is the game VPN up? | VPN down on the host, wrong `vm_ip` (still the placeholder?) or wrong port | bring the VPN up; check `vm_ip` / `vulnbox_ssh_port` |
+| cannot reach `<ip>`:`<port>` — is the game VPN up? | VPN down on the host, wrong `vm_ip` or wrong port | bring the VPN up; check `vm_ip` / `vulnbox_ssh_port` |
+| timed out after `<n>`s — check the game VPN, or retry if the link is just slow | the VPN dropped, or a step took longer than its limit: 2 minutes for preflight and recon, 15 minutes for each backup step | check the VPN, then run it again |
 | ssh refused our key | key not submitted, or the box was provisioned before it was | submit the public key on the platform; the box must be (re)provisioned with it |
 | host key changed | the box was re-provisioned | SSH key card → *forget host key*, then retry |
 | vulnbox data dir unavailable | `./vulnbox-data` missing, root-owned or read-only | `mkdir -m 700 vulnbox-data` (or `sudo chown -R $USER:$USER vulnbox-data`), then recreate the api container |
 | recon found no published service port | `vulnbox_service_ports` excludes every published port | widen it, or empty it to count every port |
+| vm_ip is a hostname | importing services needs an ip address | set `vm_ip` to the ip, run recon again, then import |
+| `<service>` is in the backups directory but is not a git clone | something else is at `vulnbox-data/backups/<service>` | move it away, run backup again |
+| ssh failed: … Not possible to fast-forward | the box's backup repo started over (the box was re-provisioned) | move `vulnbox-data/backups/<service>` away, run backup again |
 | git is not installed on the vulnbox | backups need git on the box | install `git` on the vulnbox |
 | docker ps failed / docker is not installed | recon can't map ports | start or install docker; directories are still listed |
 | interrupted — the api restarted | the api worker died mid-job | run it again |

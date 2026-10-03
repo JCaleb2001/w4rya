@@ -201,10 +201,10 @@ The page orders its cards by game phase:
    creates nothing on the box.
 3. **Recon** (at game start): service dirs + the ports their containers publish (tied
    by docker compose's `working_dir` label). Ports inside `vulnbox_service_ports`
-   import into `/config → services`, upserted by (ip, port), deleting nothing.
+   import into `/config → services`, add-only by (ip, port) (see decision 11).
 4. **Backup** (before the network opens): the first run is the **baseline**, taken
    while only our team can reach the box. Later runs commit only what changed.
-   Mirrored to `./vulnbox-data/backups/<service>/`.
+   Mirrored to `./vulnbox-data/backups/<service>/` (see decisions 9 and 10).
 
 **Layout — this is the convention for new feature modules:**
 
@@ -224,7 +224,9 @@ The page orders its cards by game phase:
 **Settings** (`app_config`, editable in `/config → game`):
 
 - `vm_ip` (existing): the ssh target. If it is unset or invalid, the routes answer
-  400 saying how to fix it.
+  400 saying how to fix it. It has no placeholder default any more (`VM_IP=""` in
+  `.env.example`), so an unset address reads as unset instead of sending ssh to a
+  made-up host.
 - `vulnbox_user` (root), `vulnbox_ssh_port` (22), `vulnbox_services_path` (/root/services).
 - `vulnbox_service_ports`: which published ports are game services, e.g.
   `9000-9999,31337`; empty = every published port.
@@ -280,10 +282,35 @@ Non-obvious decisions, each load-bearing:
    bracketed (`root@[2001:db8::2]:...`), which `backup.remote_url` does.
 8. **It never touches `authorized_keys`.** Keys the organizers installed stay, because
    removing them limits the support they can give.
+9. **A snapshot is everything but two kinds of path.** `add -f` takes what the
+   service's own `.gitignore` hides (an `.env` or a database is what a restore needs).
+   Files over `MAX_FILE_BYTES` and nested git checkouts (git would store an empty
+   gitlink, and one without a commit fails `add` outright) are kept out with
+   `:(exclude,literal)` pathspecs, so a huge file is never hashed, and unstaged with
+   `rm --cached` in case an earlier snapshot holds them. Do not go back to
+   `info/exclude`: it never applies to files already tracked, so a file that grew
+   past the cap kept being committed in full.
+10. **The mirror trusts its own HEAD, not the box's "unchanged".** `_sync_local`
+    compares the clone's HEAD with the full commit hash the script reports, so a pull
+    that failed once is retried; it re-points `origin` at the current target before
+    pulling; and it clones into `.<service>.cloning` and renames, so a clone cut off
+    half-way never looks like a mirror. Backups get `BACKUP_TIMEOUT` (15 min), not
+    the 2-minute `RUN_TIMEOUT`.
+11. **Import only adds, keeps names unique, and needs an ip.** `/query` resolves
+    `service_names` through `{name: entry}` and `ip_network(entry["ip"])`: a shared
+    name hides all but one entry, and a hostname matches no flow. So a multi-port
+    service is imported as `<service>/<port>`, a name another address uses gets
+    `-2`, `-3`…, an existing (ip, port) is left exactly as it is (its name and notes
+    may be hand-edited), and a hostname `vm_ip` is a 400. The read is
+    `app_config.get_fresh`: with 3 workers, a cached copy written back would undo
+    another worker's recent edit.
 
 Remote scripts (`services/api/vulnbox/remote/*.sh`) are allow-listed by name, piped
 into `bash -s` with `shlex.quote`d args, and emit tab-separated records. Nothing is
 installed on the box. Service names must match `^[A-Za-z0-9._-]+$` on both sides.
+Each script ends with `exit 0`: the outcome travels in the records, and a non-zero
+exit is read as the ssh hop failing (recon once exited 1 on a box with no running
+container, because its last test was a false `[[ ]] && echo`).
 
 ## Key frontend files
 
