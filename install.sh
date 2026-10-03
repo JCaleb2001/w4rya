@@ -408,6 +408,8 @@ do_install() {
   fi
   mkdir -p ./suricata-rules ./suricata-run ./auth
   [[ -f ./suricata-rules/suricata.rules ]] || touch ./suricata-rules/suricata.rules
+  # vulnbox ops data (holds a private key — owner-only when we create it).
+  mkdir -p -m 700 ./vulnbox-data
 
   # --- build + up ---------------------------------------------------------
   if [[ $DO_BUILD -eq 1 ]]; then
@@ -632,13 +634,13 @@ do_check() {
   fi
 
   step "Permissions"
-  local rootowned; rootowned="$(find ./auth ./suricata-rules ./suricata-run -uid 0 2>/dev/null | head -5)"
+  local rootowned; rootowned="$(find ./auth ./suricata-rules ./suricata-run ./vulnbox-data -uid 0 2>/dev/null | head -5)"
   if [[ -n "$rootowned" ]]; then
     warn "root-owned files (a sudo run, probably):"
     printf '       %s\n' $rootowned
-    info "fix: sudo chown -R \$USER:\$USER auth suricata-rules suricata-run"
+    info "fix: sudo chown -R \$USER:\$USER auth suricata-rules suricata-run vulnbox-data"
   else
-    ok "no root-owned files in auth/, suricata-rules/, suricata-run/"
+    ok "no root-owned files in auth/, suricata-rules/, suricata-run/, vulnbox-data/"
   fi
 
   step "Runtime"

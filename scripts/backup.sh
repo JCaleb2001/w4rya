@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Snapshot the w4rya operational state (users + suricata rules + DB-backed
-# config / audit / notes) into a single timestamped tarball. Suitable for
-# cron during a CTF.
+# config / audit / notes + the vulnbox ssh key) into a single timestamped
+# tarball. Suitable for cron during a CTF.
 #
 # Usage:
 #   ./scripts/backup.sh              # writes ./backups/<UTCISO>.tgz
@@ -49,6 +49,14 @@ fi
 # 3) .env (config secrets — be careful where this tarball ends up).
 if [[ -f .env ]]; then
   cp .env "$WORK/.env"
+fi
+
+# 4) The vulnbox ssh key (the one submitted to the platform). Losing it
+#    mid-game means submitting a new key and restarting the box. Only keys/:
+#    the service mirrors in vulnbox-data/backups/ are large and can be cloned
+#    again from the vulnbox.
+if [[ -d vulnbox-data/keys ]]; then
+  cp -rp vulnbox-data/keys "$WORK/vulnbox-keys"
 fi
 
 OUT="${BACKUP_DIR}/w4rya_${STAMP}.tgz"
