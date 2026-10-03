@@ -16,7 +16,6 @@ import base64
 import binascii
 import hashlib
 import os
-import socket
 import subprocess
 from datetime import datetime, timezone
 from typing import Optional
@@ -82,7 +81,9 @@ def generate(rotate: bool = False) -> dict:
             p.unlink()
         except FileNotFoundError:
             pass
-    comment = f"w4rya-vulnbox@{socket.gethostname()}"
+    # A fixed comment: inside the container the hostname is a random id that
+    # tells nobody on the platform which key this is.
+    comment = "w4rya-vulnbox"
     try:
         result = subprocess.run(
             ["ssh-keygen", "-t", "ed25519", "-N", "", "-C", comment, "-f", str(priv)],
