@@ -446,6 +446,8 @@ class Connection(psycopg.Connection):
         for r in rows:
             ip_dst = str(r["ip_dst"]).split("/", 1)[0]
             ip_src = str(r["ip_src"]).split("/", 1)[0]
+            if exclude_ips and ip_src in exclude_ips:
+                continue
             svc_name = svc_by_key.get((ip_dst, int(r["port_dst"])), "unknown")
             if service_filter and svc_name != service_filter:
                 continue
