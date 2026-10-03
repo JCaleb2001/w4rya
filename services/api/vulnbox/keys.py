@@ -12,6 +12,9 @@ host bind mount, so without it they turn up root-owned on the host.
 
 from __future__ import annotations
 
+import base64
+import binascii
+import hashlib
 import os
 import socket
 import subprocess
@@ -29,21 +32,19 @@ def _chown_to_parent(path) -> None:
         pass
 
 
-def _fingerprint(pub_path) -> Optional[str]:
-    """SHA256 fingerprint via `ssh-keygen -lf`. Returns the 'SHA256:...' token."""
+def fingerprint(public_key: str) -> Optional[str]:
+    """The 'SHA256:...' fingerprint `ssh-keygen -lf` prints: unpadded base64 of
+    the SHA-256 of the key blob. Computed in-process because the page polls
+    the overview while a job runs — no subprocess per poll."""
+    parts = public_key.split()
+    if len(parts) < 2:
+        return None
     try:
-        out = subprocess.run(
-            ["ssh-keygen", "-lf", str(pub_path)],
-            capture_output=True, text=True, timeout=10,
-        )
-    except (OSError, subprocess.SubprocessError):
+        blob = base64.b64decode(parts[1], validate=True)
+    except (binascii.Error, ValueError):
         return None
-    if out.returncode != 0:
-        return None
-    for tok in out.stdout.split():
-        if tok.startswith("SHA256:"):
-            return tok
-    return None
+    digest = base64.b64encode(hashlib.sha256(blob).digest()).decode().rstrip("=")
+    return f"SHA256:{digest}"
 
 
 def status() -> dict:
@@ -58,10 +59,11 @@ def status() -> dict:
         ).isoformat()
     except OSError:
         created = None
+    public_key = pub.read_text().strip()
     return {
         "exists": True,
-        "public_key": pub.read_text().strip(),
-        "fingerprint": _fingerprint(pub),
+        "public_key": public_key,
+        "fingerprint": fingerprint(public_key),
         "created_at": created,
     }
 
