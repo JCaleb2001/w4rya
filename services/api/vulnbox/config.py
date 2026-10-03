@@ -87,6 +87,9 @@ MAX_FILE_BYTES = 25 * 1024 * 1024
 # hanging a whole background job: the VPN is either up or it isn't.
 CONNECT_TIMEOUT = 8
 RUN_TIMEOUT = 120
+# A backup moves whole source trees, and the first clone over a slow game
+# link can take minutes, so it gets a longer ceiling of its own.
+BACKUP_TIMEOUT = 15 * 60
 
 
 # --- validation ------------------------------------------------------------

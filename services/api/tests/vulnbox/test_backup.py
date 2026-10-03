@@ -2,6 +2,7 @@
 clone/pull. Only the SSH hop is faked — the script runs in a tmp HOME, and the
 clone URL points at the resulting bare repo on disk."""
 
+import os
 import subprocess
 from pathlib import Path
 
@@ -146,3 +147,135 @@ def test_remote_url_is_relative_to_the_remote_home():
 def test_remote_url_brackets_an_ipv6_host():
     target = vconfig.Target(host="2001:db8::2", port=22, user="root", services_path="/root/services")
     assert backup.remote_url(target, "web") == "root@[2001:db8::2]:.w4rya-backups/web.git"
+
+
+# --- review fixes: what the baseline really contains ---------------------------
+
+def tree(box, name):
+    out = subprocess.run(
+        ["git", "--git-dir", str(box["root"] / f"{name}.git"), "ls-tree", "-r", "HEAD"],
+        capture_output=True, text=True,
+    ).stdout
+    return {line.split("\t", 1)[1]: line.split()[0] for line in out.splitlines()}
+
+
+def test_a_tracked_file_that_grows_past_the_cap_leaves_the_snapshot(box):
+    (box["services"] / "api" / "data.db").write_bytes(b"x" * 10)
+    run_script(box, max_bytes=1000)
+    assert "data.db" in tree(box, "api")
+    (box["services"] / "api" / "data.db").write_bytes(b"x" * 5000)
+    r = rows(run_script(box, max_bytes=1000))
+    assert {s["path"] for s in r["api"]["skipped"]} == {"data.db"}
+    assert "data.db" not in tree(box, "api")
+
+
+def test_files_hidden_by_the_services_own_gitignore_are_backed_up(box):
+    svc = box["services"] / "api"
+    (svc / ".gitignore").write_text(".env\n*.db\n")
+    (svc / ".env").write_text("SECRET=1\n")
+    (svc / "state.db").write_bytes(b"db")
+    run_script(box)
+    assert {".env", "state.db", ".gitignore", "app.py"} <= set(tree(box, "api"))
+
+
+def test_nested_git_checkouts_are_reported_not_stored_as_empty_links(box):
+    lib = box["services"] / "api" / "vendor" / "lib"
+    lib.mkdir(parents=True)
+    (lib / "lib.py").write_text("x = 1\n")
+    subprocess.run(["git", "init", "-q", str(lib)], check=True)
+    r = rows(run_script(box))
+    assert {"path": "vendor/lib", "bytes": 0, "reason": "nested git repository"} in r["api"]["skipped"]
+    assert all(mode != "160000" for mode in tree(box, "api").values())  # no gitlink
+
+
+def test_commit_is_the_full_hash(box):
+    commit = rows(run_script(box))["web"]["commit"]
+    assert len(commit) == 40 and int(commit, 16) >= 0
+
+
+# --- review fixes: the local mirror -------------------------------------------
+
+def git_out(cwd, *args):
+    return subprocess.run(["git", "-C", str(cwd), *args], capture_output=True,
+                          text=True).stdout.strip()
+
+
+def test_backup_runs_with_the_long_backup_timeout(box, wired, monkeypatch):
+    seen = {}
+    real = ssh.run_remote_script
+
+    def spy(name, args, **kw):
+        seen["timeout"] = kw.get("timeout")
+        return real(name, args, **kw)
+    monkeypatch.setattr(ssh, "run_remote_script", spy)
+    backup.run(wired)
+    assert seen["timeout"] == vconfig.BACKUP_TIMEOUT
+
+
+def test_a_failed_pull_is_retried_even_when_the_box_reports_unchanged(box, wired, monkeypatch):
+    backup.run(wired)
+    (box["services"] / "web" / "index.html").write_text("<h1>v2</h1>\n")
+    real_git = backup._git
+
+    def failing_pull(args, target, cwd=None, **kw):
+        if args[0] == "pull":
+            return subprocess.CompletedProcess(args, 1, "", "Connection timed out")
+        return real_git(args, target, cwd=cwd, **kw)
+    monkeypatch.setattr(backup, "_git", failing_pull)
+    r = {s["name"]: s for s in backup.run(wired)["services"]}
+    assert r["web"]["local"] == "error"
+
+    monkeypatch.setattr(backup, "_git", real_git)
+    r = {s["name"]: s for s in backup.run(wired)["services"]}
+    assert r["web"]["status"] == "unchanged"
+    assert r["web"]["local"] == "pulled"  # not "up to date": the mirror was behind
+    assert (vconfig.backups_dir() / "web" / "index.html").read_text() == "<h1>v2</h1>\n"
+
+
+def test_the_mirror_follows_a_changed_target(box, wired, monkeypatch, tmp_path):
+    import shutil
+    backup.run(wired)
+    moved = tmp_path / "moved-box"
+    real_remote = ssh.run_remote_script
+
+    def remote_then_move(name, args, **kw):
+        proc = real_remote(name, args, **kw)
+        shutil.rmtree(moved, ignore_errors=True)
+        shutil.copytree(box["root"], moved)  # the box now answers at a new address
+        return proc
+    monkeypatch.setattr(ssh, "run_remote_script", remote_then_move)
+    monkeypatch.setattr(backup, "remote_url", lambda target, name: str(moved / f"{name}.git"))
+    (box["services"] / "web" / "index.html").write_text("<h1>v3</h1>\n")
+    r = {s["name"]: s for s in backup.run(wired)["services"]}
+    assert r["web"]["local"] == "pulled"
+    local = vconfig.backups_dir() / "web"
+    assert git_out(local, "remote", "get-url", "origin") == str(moved / "web.git")
+
+
+def test_an_interrupted_clone_leaves_nothing_behind(box, wired, monkeypatch):
+    real_git = backup._git
+
+    def dying_clone(args, target, cwd=None, **kw):
+        if args[0] == "clone":
+            Path(args[-1], ".git").mkdir(parents=True)  # half-made checkout
+            return subprocess.CompletedProcess(args, 124, "", "timed out after 900s")
+        return real_git(args, target, cwd=cwd, **kw)
+    monkeypatch.setattr(backup, "_git", dying_clone)
+    r = {s["name"]: s for s in backup.run(wired)["services"]}
+    assert r["web"]["local"] == "error"
+    assert not (vconfig.backups_dir() / "web").exists()
+    assert not any(p.name.startswith(".") for p in vconfig.backups_dir().iterdir())
+
+    monkeypatch.setattr(backup, "_git", real_git)
+    r = {s["name"]: s for s in backup.run(wired)["services"]}
+    assert r["web"]["local"] == "cloned"
+
+
+@pytest.mark.skipif(os.geteuid() != 0, reason="chown to another uid needs root")
+def test_clones_belong_to_the_data_dir_owner(box, wired):
+    os.chown(vconfig.data_dir(), 4242, 4242)
+    vconfig.init_paths()
+    backup.run(wired)
+    clone = vconfig.backups_dir() / "web"
+    assert clone.stat().st_uid == 4242
+    assert (clone / "index.html").stat().st_uid == 4242

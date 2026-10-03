@@ -34,7 +34,9 @@ if command -v docker >/dev/null 2>&1; then
   # verbatim regardless of how it handles escapes.
   if out="$(docker ps --format "{{.Names}}${TAB}{{.Ports}}${TAB}{{.Image}}${TAB}{{.Label \"com.docker.compose.project.working_dir\"}}" 2>&1)"; then
     while IFS= read -r line; do
-      [[ -n "$line" ]] && echo "CTR${TAB}${line}"
+      if [[ -n "$line" ]]; then
+        echo "CTR${TAB}${line}"
+      fi
     done <<<"$out"
   else
     echo "NOTE${TAB}docker ps failed: $(head -1 <<<"$out")"
@@ -42,3 +44,5 @@ if command -v docker >/dev/null 2>&1; then
 else
   echo "NOTE${TAB}docker is not installed; ports could not be mapped"
 fi
+# Records carry the outcome; a non-zero exit means the ssh hop itself failed.
+exit 0

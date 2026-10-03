@@ -116,3 +116,22 @@ def test_recon_script_runs_for_real_locally(tmp_path):
     assert proc.returncode == 0
     out = recon.build(recon.parse(proc.stdout), str(services))
     assert {s["name"] for s in out["services"]} == {"alpha", "beta"}
+
+
+def test_recon_script_succeeds_when_no_container_is_running(tmp_path):
+    """`docker ps` printing nothing (no containers up yet) is a normal answer,
+    not a failed recon."""
+    services = tmp_path / "services"
+    (services / "alpha").mkdir(parents=True)
+    stub = tmp_path / "bin" / "docker"
+    stub.parent.mkdir()
+    stub.write_text("#!/bin/sh\nexit 0\n")
+    stub.chmod(0o755)
+    script = Path(recon.__file__).parent / "remote" / "recon.sh"
+    proc = subprocess.run(["bash", str(script), str(services)],
+                          capture_output=True, text=True, timeout=20,
+                          env={"PATH": f"{stub.parent}:/usr/bin:/bin"})
+    assert proc.returncode == 0, proc.stderr
+    out = recon.build(recon.parse(proc.stdout), str(services))
+    assert [s["name"] for s in out["services"]] == ["alpha"]
+    assert out["services"][0]["containers"] == []

@@ -37,3 +37,4 @@ if command -v docker >/dev/null 2>&1; then
 else
   check docker fail "docker is not installed (recon cannot map ports)"
 fi
+exit 0

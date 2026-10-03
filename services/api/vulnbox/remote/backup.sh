@@ -13,13 +13,22 @@
 #
 # The first run for a service creates the repo and commits the baseline (the
 # pristine code, ideally taken in the window before other teams can connect).
-# Later runs only commit when something changed. Files over max_file_bytes are
-# left out via the repo's info/exclude — rewritten every run, so a file that
-# shrinks back under the cap is picked up again — and reported.
+# Later runs only commit when something changed.
+#
+# A snapshot holds every file in the directory, including the ones the
+# service's own .gitignore hides (`add -f`): its .env or its database are what
+# a restore needs. Two kinds of path are left out, and reported:
+#   - files over max_file_bytes (dumps, build artifacts, stray pcaps);
+#   - nested git checkouts, of which git would store only a link to a commit,
+#     never the files.
+# They are kept out of `git add` with exclude pathspecs, so a huge file is
+# never hashed into the repo, and unstaged in case an earlier snapshot holds
+# them: a file that grows past the cap leaves the snapshot.
 #
 # Output (tab-separated, one record per line):
 #   SVC   <TAB> <name> <TAB> created|updated|unchanged|error <TAB> <commit> <TAB> <files> <TAB> <detail>
 #   BIG   <TAB> <name> <TAB> <relative path> <TAB> <bytes>
+#   NEST  <TAB> <name> <TAB> <relative path>
 #   FATAL <TAB> <message>
 set -uo pipefail
 
@@ -43,12 +52,25 @@ STAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 repo=""
 dir=""
+# Runs from the service directory, so pathspecs are relative to its root.
 # -c identity: commit without writing any git config on the vulnbox.
 g() {
-  git --git-dir="$repo" --work-tree="$dir" \
+  git -C "$dir" --git-dir="$repo" --work-tree="$dir" \
     -c user.name=w4rya-backup -c user.email=backup@w4rya.local "$@"
 }
 svc() { echo "SVC${TAB}$1${TAB}$2${TAB}$3${TAB}$4${TAB}$5"; }
+# File names are other people's data (a service may create files with any
+# name): a tab or newline in one must not break the record format.
+clean() { local s="${1//$'\t'/?}"; printf '%s' "${s//$'\n'/?}"; }
+# ${a[@]+"${a[@]}"}: expands an empty array without tripping `set -u` on
+# bash < 4.4.
+in_nested() {
+  local sub
+  for sub in ${nested[@]+"${nested[@]}"}; do
+    [[ "$1" == "$sub"/* ]] && return 0
+  done
+  return 1
+}
 
 for d in "$SERVICES_PATH"/*/; do
   [[ -d "$d" ]] || continue
@@ -60,41 +82,61 @@ for d in "$SERVICES_PATH"/*/; do
     continue
   fi
   repo="$BACKUP_ROOT/$name.git"
-  status=updated
-  if [[ ! -d "$repo" ]]; then
-    if ! git init -q --bare "$repo" >/dev/null 2>&1; then
-      svc "$name" error "" 0 "git init failed"
-      continue
-    fi
-    status=created
+  if [[ ! -d "$repo" ]] && ! git init -q --bare "$repo" >/dev/null 2>&1; then
+    svc "$name" error "" 0 "git init failed"
+    continue
   fi
 
-  mkdir -p "$repo/info"
-  : >"$repo/info/exclude"
-  while IFS= read -r -d '' f; do
-    rel="${f#"$dir"/}"
-    echo "BIG${TAB}${name}${TAB}${rel}${TAB}$(stat -c %s "$f" 2>/dev/null || echo 0)"
-    # Anchor at the work-tree root and escape gitignore glob characters, so
-    # the pattern matches exactly this one file.
-    printf '/%s\n' "$(printf '%s' "$rel" | sed 's/[][*?\\]/\\&/g')" >>"$repo/info/exclude"
-  done < <(find "$dir" -type f -size +"${MAX_BYTES}"c -print0 2>/dev/null)
+  nested=()
+  left_out=()
+  # The service's own top-level .git, if it has one, is not nested: git never
+  # adds a path named .git.
+  while IFS= read -r -d '' p; do
+    [[ "$p" == ./.git ]] && continue
+    rel="${p#./}"
+    rel="${rel%/.git}"
+    nested+=("$rel")
+    left_out+=("$rel")
+    echo "NEST${TAB}${name}${TAB}$(clean "$rel")"
+  done < <(cd "$dir" && find . -name .git -prune -print0 2>/dev/null)
+  while IFS= read -r -d '' p; do
+    rel="${p#./}"
+    in_nested "$rel" && continue
+    left_out+=("$rel")
+    echo "BIG${TAB}${name}${TAB}$(clean "$rel")${TAB}$(stat -c %s "$dir/$rel" 2>/dev/null || echo 0)"
+  done < <(cd "$dir" && find . -name .git -prune -o -type f -size +"${MAX_BYTES}"c -print0 2>/dev/null)
 
-  if ! g add -A >/dev/null 2>&1; then
+  # literal: a name with * or [ in it must match only itself.
+  unstage=()
+  exclude=()
+  for rel in ${left_out[@]+"${left_out[@]}"}; do
+    unstage+=(":(literal)$rel")
+    exclude+=(":(exclude,literal)$rel")
+  done
+  if (( ${#unstage[@]} )) && ! g rm -r -q -f --cached --ignore-unmatch -- "${unstage[@]}" >/dev/null 2>&1; then
+    svc "$name" error "" 0 "git rm --cached failed"
+    continue
+  fi
+  if ! g add -A -f -- . ${exclude[@]+"${exclude[@]}"} >/dev/null 2>&1; then
     svc "$name" error "" 0 "git add failed"
     continue
   fi
-  if [[ "$status" == created ]]; then
+
+  if ! g rev-parse -q --verify HEAD >/dev/null 2>&1; then
     # --allow-empty: even an empty directory gets a baseline commit, so the
     # repo always has a branch to clone.
-    if ! g commit -q --allow-empty -m "baseline $STAMP" >/dev/null 2>&1; then
-      svc "$name" error "" 0 "git commit failed"
-      continue
-    fi
+    status=created
+    g commit -q --allow-empty -m "baseline $STAMP" >/dev/null 2>&1 || status=error
   elif g diff --cached --quiet 2>/dev/null; then
     status=unchanged
-  elif ! g commit -q -m "snapshot $STAMP" >/dev/null 2>&1; then
+  else
+    status=updated
+    g commit -q -m "snapshot $STAMP" >/dev/null 2>&1 || status=error
+  fi
+  if [[ "$status" == error ]]; then
     svc "$name" error "" 0 "git commit failed"
     continue
   fi
-  svc "$name" "$status" "$(g rev-parse --short HEAD 2>/dev/null)" "$(g ls-files 2>/dev/null | wc -l)" ""
+  svc "$name" "$status" "$(g rev-parse HEAD 2>/dev/null)" "$(g ls-files 2>/dev/null | wc -l)" ""
 done
+exit 0
