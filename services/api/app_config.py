@@ -66,7 +66,9 @@ DEFAULTS: dict[str, Any] = {
     "tick_length": int(os.environ.get("TICK_LENGTH") or 180000),
     "start_date": os.environ.get("TICK_START", "2024-11-30T13:00:00Z"),
     "flag_lifetime": int(os.environ.get("FLAG_LIFETIME") or 5),
-    "vm_ip": os.environ.get("VM_IP", "10.10.3.1"),
+    # No placeholder: this is the /vulnbox ssh target, and an unset address
+    # must read as unset rather than send ssh to a made-up host.
+    "vm_ip": os.environ.get("VM_IP", ""),
     "team_id": os.environ.get("TEAM_ID", "0"),
     "visualizer_url": os.environ.get("VISUALIZER_URL", ""),
     "bpf": os.environ.get("BPF", ""),
@@ -76,6 +78,13 @@ DEFAULTS: dict[str, Any] = {
     # the checker (plants and reads its own flag every tick) and our own
     # tooling talking to the vulnbox. Comma-separated ips or CIDRs.
     "noise_ips": os.environ.get("NOISE_IPS", ""),
+    # Vulnbox ops module (services/api/vulnbox/). The ssh host is vm_ip above;
+    # these say how to log in and where the services live. service_ports are
+    # the published ports other teams reach ("9000-9999,31337"); empty = all.
+    "vulnbox_user": os.environ.get("VULNBOX_USER", "root"),
+    "vulnbox_ssh_port": int(os.environ.get("VULNBOX_SSH_PORT") or 22),
+    "vulnbox_services_path": os.environ.get("VULNBOX_SERVICES_PATH", "/root/services"),
+    "vulnbox_service_ports": os.environ.get("VULNBOX_SERVICE_PORTS", ""),
 }
 
 
@@ -230,6 +239,10 @@ SCALAR_KEYS = {
     "bpf",
     "rules_autoreload",
     "noise_ips",
+    "vulnbox_user",
+    "vulnbox_ssh_port",
+    "vulnbox_services_path",
+    "vulnbox_service_ports",
 }
 
 BOOL_KEYS = {"rules_autoreload"}
@@ -272,6 +285,18 @@ def coerce_scalar(key: str, raw: Any) -> Any:
         except ValueError as e:
             raise ValueError(f"invalid ip or CIDR: {e}")
         return ", ".join(str(n) for n in nets)
+    if key.startswith("vulnbox_"):
+        # Validators live in the vulnbox package (imported lazily to keep this
+        # low-level module free of any feature-package import at load time).
+        from vulnbox import config as _vconfig
+        if key == "vulnbox_ssh_port":
+            return _vconfig.validate_port(raw)
+        if key == "vulnbox_user":
+            return _vconfig.validate_username(raw)
+        if key == "vulnbox_services_path":
+            return _vconfig.validate_services_path(raw)
+        if key == "vulnbox_service_ports":
+            return _vconfig.validate_service_ports(raw)
     if key == "flag_regex":
         s = str(raw)
         # D1: validate at write-time so a typo doesn't break /query for the

@@ -6,6 +6,49 @@ change `.env`, the schema, or a script invocation.
 
 Releases before 0.7.0 predate this file — see `git log` and the release tags.
 
+## [Unreleased]
+
+### Added
+
+- **Vulnbox ops page (`/vulnbox`)**: prepares and defends our own vulnbox, one
+  button per action, in the order a game needs it:
+  - **SSH key**: generate an ed25519 key and submit the public half to the A/D
+    platform. The private half is download-only (admin, audited) and never
+    shown on screen.
+  - **Preflight**: a read-only checklist (key → VPN/host → ssh login → services
+    path / git / docker) that names the first broken link.
+  - **Recon**: services and their published ports. The service ports import
+    into `/config → services` in one click. Import only adds, so entries
+    already there keep their hand-edited names and notes.
+  - **Backup**: a git baseline and then snapshots of every service, including
+    the files its own `.gitignore` hides. They live in bare repos outside the
+    service directories on the box (no `.git` in a served directory), mirrored
+    to `./vulnbox-data/backups/`. Files over 25 MiB and nested git checkouts
+    are left out and listed.
+- **Game presets**: named bundles of `/config` values for one game (round
+  length, flag format, start time, service ports), defined as data in
+  `services/api/vulnbox/presets.py` and applied from `/vulnbox`.
+- New settings in `/config`: `vulnbox_user`, `vulnbox_ssh_port`,
+  `vulnbox_services_path`, `vulnbox_service_ports`. The ssh target is the
+  existing `vm_ip`.
+- `scripts/backup.sh` now also saves the vulnbox ssh key.
+
+### Changed
+
+- `VM_IP` has no placeholder any more: it is empty in `.env.example`, and
+  `/config → our team vm ip` defaults to empty. It is now the `/vulnbox` ssh
+  target, and an unset address should say so rather than point ssh at a
+  made-up host.
+
+### Upgrading
+
+- Re-run `./install.sh` (or `mkdir -m 700 vulnbox-data`) before recreating the
+  stack, so `./vulnbox-data` is created owned by you. If Docker creates it, it
+  comes out root-owned.
+- Check `/config → our team vm ip`. If it shows `10.10.3.1`, that is the old
+  example's placeholder (from `.env`, or saved with the Game form): set our
+  vulnbox's real address, or `/vulnbox` will try to ssh into that host.
+
 ## [0.8.0] — 2026-09-17
 
 Exploit isolation, incident packets, and the exploit-intel workflow — turning

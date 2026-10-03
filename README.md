@@ -91,6 +91,24 @@ in the UI while the game runs — no rebuild.
 > at boot, so changing those in the UI reaches the API immediately but not the
 > assembler. Run `docker compose restart assembler` after changing them.
 
+### Vulnbox (key, preflight, recon, backup)
+
+**/vulnbox** gets our own vulnbox ready, in the order a game needs it:
+
+1. **SSH key**: generate it, then submit the public key to the A/D platform. The
+   private key is download-only and never shown on screen.
+2. **Preflight**: a read-only check that the VPN, the ssh login and the box's tools
+   are all good.
+3. **Recon**: lists the services and their ports. Import the service ports into
+   `/config` with one click.
+4. **Backup**: a git baseline of every service, then snapshots. The copies land in
+   `./vulnbox-data/backups/`.
+
+Set our vulnbox address (`vm_ip`) in `/config` first. A **game preset** fills in a
+game's round length, flag format, start time and service ports in one step. Adding a
+preset for a new game is one entry in `services/api/vulnbox/presets.py`. Details:
+`services/api/vulnbox/README.md`.
+
 ## Manual start
 
 If you would rather not use the installer:

@@ -6,6 +6,11 @@ WORKDIR /app
 
 RUN pip install -r requirements.txt
 
+# The vulnbox module shells out to ssh, ssh-keygen and git. The full
+# python:3.10 image ships them (buildpack-deps); fail the build loudly if a
+# slimmer base image ever drops them, instead of at the first button press.
+RUN command -v ssh && command -v ssh-keygen && command -v git
+
 COPY . /app
 
 STOPSIGNAL SIGINT

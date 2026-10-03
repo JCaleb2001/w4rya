@@ -90,13 +90,20 @@ function GameForm({ canEdit }: { canEdit: boolean }) {
     tick_length: { label: "tick length (ms)", type: "number" },
     start_date: { label: "tick start (iso8601 utc)" },
     flag_lifetime: { label: "flag lifetime (ticks)", type: "number" },
-    vm_ip: { label: "our team vm ip" },
+    vm_ip: { label: "our team vm ip", note: "also the /vulnbox ssh target" },
     team_id: { label: "our team id" },
     visualizer_url: { label: "visualizer url (optional)" },
     bpf: { label: "bpf filter (optional)", note: RESTART },
     noise_ips: {
       label: "extra noise ips (our own tooling, etc — comma separated)",
       note: "confirmed checker IPs from the Checker tab are hidden automatically, no need to also list them here",
+    },
+    vulnbox_user: { label: "vulnbox ssh user" },
+    vulnbox_ssh_port: { label: "vulnbox ssh port", type: "number" },
+    vulnbox_services_path: { label: "vulnbox services path" },
+    vulnbox_service_ports: {
+      label: "vulnbox service ports (optional)",
+      note: "e.g. 9000-9999,31337 — empty = every published port",
     },
   };
 

@@ -37,6 +37,14 @@ MATRIX = [
     ("DELETE", "/users/somebody",                                "admin"),
     ("PUT",    "/users/somebody/role",                           "admin"),
     ("PUT",    "/users/somebody/password",                       "admin"),
+    ("POST",   "/vulnbox/key",                                   "admin"),
+    ("GET",    "/vulnbox/key/private",                           "admin"),
+    ("DELETE", "/vulnbox/known-host",                            "admin"),
+    ("POST",   "/vulnbox/import-services",                       "admin"),
+    ("POST",   "/vulnbox/presets/somepreset",                    "admin"),
+    ("POST",   "/vulnbox/preflight",                             "operator"),
+    ("POST",   "/vulnbox/recon",                                 "operator"),
+    ("POST",   "/vulnbox/backup",                                "operator"),
 ]
 
 BELOW = {"operator": "viewer", "admin": "operator"}
