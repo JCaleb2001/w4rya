@@ -374,7 +374,12 @@ def _parse_rule_content_clauses(line: str) -> Optional[list[tuple[bytes, str, st
             negated, value = m.group(1), m.group(2)
             if negated:
                 return None  # a "must NOT contain" clause has nothing to positively isolate on
-            pattern = _decode_suricata_content_value(value).lower()
+            try:
+                pattern = _decode_suricata_content_value(value).lower()
+            except ValueError:
+                # Malformed |hex| run (odd count of `|`) — bail rather than
+                # crash; callers treat this the same as "can't isolate".
+                return None
             buffer = current_buffer
             mode = "contains"
             j = i + 1
@@ -386,6 +391,11 @@ def _parse_rule_content_clauses(line: str) -> Optional[list[tuple[bytes, str, st
                     mode = "endswith"
                 elif nxt == "startswith":
                     mode = "startswith"
+                elif nxt in _SAFE_BARE_MODIFIERS:
+                    # e.g. `nocase;` between the content and its buffer
+                    # keyword (`content:"..."; nocase; http_uri;`) — keep
+                    # looking rather than stopping the lookahead here.
+                    pass
                 else:
                     break
                 j += 1
@@ -494,10 +504,10 @@ def _clause_matches(data: bytes, pattern: bytes, mode: str, buffer: str) -> bool
     return pattern in haystack
 
 
-# Past this many genuinely-distinct matches, listing every one of them in
-# the generated script stops being "the exploit, isolated" and starts being
-# "most of the session again" — collapse to a single representative instead
-# (see find_exploit_item's docstring).
+# Threshold past which a *duplicate/near-duplicate* run (a replayed request,
+# or a scanner retrying the same template) is assumed to be noise rather
+# than a longer genuine attack chain — never applied to matches that are
+# actually distinct (see find_exploit_item's docstring).
 _MAX_MATCHED_ITEMS = 5
 
 
@@ -513,19 +523,15 @@ def find_exploit_item(
       to the others (a replayed/brute-forced request fired the rule N
       times — there is no meaningful difference between "request 3 of 40"
       and "request 37 of 40", so the first occurrence stands in for all of
-      them); or MORE than `_MAX_MATCHED_ITEMS` items matched and they're
-      NOT all identical (e.g. a scanner retrying the same exploit template
-      with a fresh random identifier each attempt, 100 times over) — past
-      that count, listing every distinct variant stops being useful, so
-      the first occurrence stands in as a representative the same way a
-      dedup does.
-    - "matched_items": `item_index` is a list of ints (bounded to at most
-      `_MAX_MATCHED_ITEMS`) — more than one client item matched and they
-      are NOT all identical, i.e. genuinely distinct requests that
-      both/all satisfied the rule (e.g. a two-stage attack like MSSQL's
-      "enable xp_cmdshell" followed by "run xp_cmdshell" — both packets
-      legitimately contain the rule's content match, and dropping either
-      one would silently lose part of the actual attack).
+      them).
+    - "matched_items": `item_index` is a list of ints, however many —
+      more than one client item matched and they are NOT all identical,
+      i.e. genuinely distinct requests that both/all satisfied the rule
+      (e.g. a two-stage attack like MSSQL's "enable xp_cmdshell" followed
+      by "run xp_cmdshell" — both packets legitimately contain the rule's
+      content match, and dropping either one would silently lose part of
+      the actual attack). Never truncated: a longer genuine attack chain
+      is listed in full rather than collapsed to a representative.
     - "full_flow": `item_index` is None — couldn't isolate at all (no sid,
       no content clauses, or genuinely zero matches).
 
@@ -563,8 +569,10 @@ def find_exploit_item(
     if len(matches) == 1:
         return (matches[0], "single_item")
     unique_payloads = {flow.items[i].data for i in matches}
-    if len(unique_payloads) == 1 or len(matches) > _MAX_MATCHED_ITEMS:
+    if len(unique_payloads) == 1:
         return (matches[0], "single_item")
+    # Genuinely distinct matches are never silently dropped, however many
+    # there are — losing a real attack step is worse than a long list.
     return (matches, "matched_items")
 
 
@@ -621,7 +629,10 @@ def _find_pair_containing(pairs: list[tuple[str, str]], pattern_lower: str) -> O
 def _find_in_query(uri: bytes, pattern: bytes) -> Optional[tuple[str, str]]:
     if b"?" not in uri:
         return None
-    query = uri.split(b"?", 1)[1].decode("utf-8", errors="replace")
+    # latin-1 throughout: the pattern below is also decoded latin-1, and
+    # both ultimately come from the same raw byte source — mixing encodings
+    # here would make an identical multi-byte sequence compare unequal.
+    query = uri.split(b"?", 1)[1].decode("latin-1", errors="replace")
     try:
         pairs = urllib.parse.parse_qsl(query, keep_blank_values=True)
     except ValueError:
@@ -648,7 +659,7 @@ def _flatten_json(obj, prefix: str = "") -> list[tuple[str, str]]:
 
 def _find_in_body(body: bytes, pattern: bytes) -> Optional[tuple[str, str]]:
     pattern_lower = pattern.decode("latin-1", errors="replace").lower()
-    text = body.decode("utf-8", errors="replace")
+    text = body.decode("latin-1", errors="replace")
     try:
         parsed_json = json.loads(text)
     except (json.JSONDecodeError, ValueError):
@@ -666,7 +677,7 @@ def _find_in_body(body: bytes, pattern: bytes) -> Optional[tuple[str, str]]:
 
 def _find_in_cookie(cookie_header: bytes, pattern: bytes) -> Optional[tuple[str, str]]:
     pattern_lower = pattern.decode("latin-1", errors="replace").lower()
-    text = cookie_header.decode("utf-8", errors="replace")
+    text = cookie_header.decode("latin-1", errors="replace")
     pairs = []
     for part in text.split(";"):
         if "=" not in part:

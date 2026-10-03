@@ -19,7 +19,11 @@ import {
   FORCE_REFETCH_ON_STAR,
 } from "../const";
 import { useAppSelector, useAppDispatch } from "../store";
-import { toggleFilterTag, toggleTagIntersectMode } from "../store/filter";
+import {
+  toggleFilterTag,
+  toggleHideNoise,
+  toggleTagIntersectMode,
+} from "../store/filter";
 
 import { HeartIcon, FilterIcon, LinkIcon } from "@heroicons/react/solid";
 import { HeartIcon as EmptyHeartIcon } from "@heroicons/react/outline";
@@ -60,6 +64,7 @@ export function FlowList() {
   const includeTags = useAppSelector((state) => state.filter.includeTags);
   const excludeTags = useAppSelector((state) => state.filter.excludeTags);
   const tagIntersectionMode = useAppSelector((state) => state.filter.tagIntersectionMode);
+  const hideNoise = useAppSelector((state) => state.filter.hideNoise);
 
   const dispatch = useAppDispatch();
 
@@ -136,6 +141,7 @@ export function FlowList() {
       tags_include: includeTags,
       tags_exclude: excludeTags,
       tag_intersection_mode: tagIntersectionMode,
+      hide_noise: hideNoise,
       flags: filterFlags,
       flagids: filterFlagids,
     },
@@ -379,6 +385,29 @@ export function FlowList() {
                   })}
                 </div>
               )}
+            </div>
+
+            {/* noise */}
+            <div>
+              <div className="flex items-center mb-1.5">
+                <p className="text-[10px] uppercase tracking-[0.2em] font-bold text-hax-muted">
+                  ▎noise
+                </p>
+                <button
+                  className="ml-auto hax-btn text-[10px]"
+                  onClick={() => dispatch(toggleHideNoise())}
+                  title="Hides sources listed in the noise_ips config (the checker, our own tooling). Set them in /config."
+                >
+                  checker + self:&nbsp;
+                  <span
+                    className={
+                      hideNoise ? "text-hax-accent-bright" : "text-hax-warning"
+                    }
+                  >
+                    {hideNoise ? "HIDDEN" : "SHOWN"}
+                  </span>
+                </button>
+              </div>
             </div>
 
             {/* pcap source filter */}

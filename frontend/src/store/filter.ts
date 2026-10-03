@@ -6,6 +6,10 @@ export interface W4ryaFilterState {
   includeTags: string[];
   excludeTags: string[];
   tagIntersectionMode: "AND" | "OR";
+  // Hide the checker and our own traffic. On by default: during a game
+  // that is what you want every time, and the flows it hides are the ones
+  // nobody reads.
+  hideNoise: boolean;
   // startTick?: number;
   // endTick?: number;
   // service?: string;
@@ -18,6 +22,7 @@ const initialState: W4ryaFilterState = {
   filterFlags: [],
   filterFlagids: [],
   tagIntersectionMode: "OR",
+  hideNoise: true,
 };
 
 export const filterSlice = createSlice({
@@ -67,9 +72,13 @@ export const filterSlice = createSlice({
     toggleTagIntersectMode: (state) => {
       state.tagIntersectionMode = state.tagIntersectionMode == "AND" ? "OR" : "AND";
     },
+    toggleHideNoise: (state) => {
+      state.hideNoise = !state.hideNoise;
+    },
   },
 });
 
-export const { toggleFilterTag, toggleTagIntersectMode } = filterSlice.actions;
+export const { toggleFilterTag, toggleTagIntersectMode, toggleHideNoise } =
+  filterSlice.actions;
 
 export default filterSlice.reducer;

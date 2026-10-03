@@ -32,7 +32,7 @@ export function AttackAlertWatcher() {
     // First successful load: prime the seen-set without firing toasts for
     // historical alerts. We only want to alert on hits from now onwards.
     if (!bootedRef.current) {
-      events.forEach((e) => seenRef.current.add(e.flow_id));
+      seenRef.current = new Set(events.map((e) => e.flow_id));
       bootedRef.current = true;
       return;
     }
@@ -52,6 +52,11 @@ export function AttackAlertWatcher() {
         })
       );
     }
+    // Replace rather than accumulate: an event that scrolls out of this
+    // polled window is older than every event still in it, so it can never
+    // reappear later — remembering it forever would just leak memory over
+    // a multi-hour session.
+    seenRef.current = new Set(events.map((e) => e.flow_id));
   }, [data, dispatch]);
 
   return null;

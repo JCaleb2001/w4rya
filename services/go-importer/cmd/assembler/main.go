@@ -41,6 +41,11 @@ var tstype = ""
 var promisc = true
 
 var watch_dir = flag.String("dir", "", "Directory to watch for new pcaps")
+var watchPollInterval = flag.String("watch-poll-interval", "10s", `How often to rescan -dir for pcaps fsnotify never reported.
+Docker Desktop's Windows bind mounts drop inotify events, so a file can land in the watch dir without any event
+ever arriving, and the assembler sits idle while pcaps pile up. The rescan is cheap: only files whose size or
+mtime changed are re-offered, and already-ingested packets are skipped by position.
+Any string parsed by time.ParseDuration is acceptable. Set to "0" to rely on fsnotify alone.`)
 var timescale = flag.String("timescale", "", "Timescale connection string (e. g. postgres://usr:pwd@host:5432/w4rya)")
 var flag_regex = flag.String("flag", "", "flag regex, used for flag in/out tagging")
 var pcap_over_ip = flag.String("pcap-over-ip", "", "PCAP-over-IP host + port (e.g. remote:1337)")
@@ -355,6 +360,9 @@ func main() {
 	if os.Getenv("DUMP_PCAPS_FILENAME") != "" {
 		*dumpPcapsFilename = os.Getenv("DUMP_PCAPS_FILENAME")
 	}
+	if os.Getenv("WATCH_POLL_INTERVAL") != "" {
+		*watchPollInterval = os.Getenv("WATCH_POLL_INTERVAL")
+	}
 
 	dumpInterval, err := time.ParseDuration(*dumpPcapsInterval)
 	if err != nil {
@@ -467,6 +475,66 @@ func connectToPCAPOverIP(service *AssemblerService, pcapIP string) {
 	}
 }
 
+// pcapFileState is what the directory scanner remembers about a file it has
+// already offered to the assembler. A file is re-offered when either field
+// changes: tcpdump appending to the newest file bumps both, and ingestion is
+// idempotent because ProcessPcapHandle skips packets already recorded against
+// this filename.
+type pcapFileState struct {
+	size    int64
+	modTime time.Time
+}
+
+// accepts files with extensions that start with .pcap (.pcapng .pcap1 etc)
+func isPcapName(name string) bool {
+	return strings.HasPrefix(filepath.Ext(name), ".pcap")
+}
+
+// scanDir offers every new-or-changed pcap in watch_dir to the assembler and
+// updates seen in place. It is the ONLY ingestion path once WatchDir is
+// running: the fsnotify watcher just wakes it. That matters because
+// ProcessPcapHandle mutates shared assembler state, so two goroutines noticing
+// the same file must not both process it.
+func (service *AssemblerService) scanDir(watch_dir string, seen map[string]pcapFileState) {
+	files, err := ioutil.ReadDir(watch_dir)
+	if err != nil {
+		// Not fatal: the dir can be briefly unavailable on a bind mount, and
+		// the next tick will retry.
+		log.Println("Failed to read watch dir:", err)
+		return
+	}
+
+	present := make(map[string]bool, len(files))
+	for _, file := range files {
+		if file.IsDir() || !isPcapName(file.Name()) {
+			continue
+		}
+		present[file.Name()] = true
+
+		state := pcapFileState{size: file.Size(), modTime: file.ModTime()}
+		prev, known := seen[file.Name()]
+		if known && prev.size == state.size && prev.modTime.Equal(state.modTime) {
+			continue
+		}
+		seen[file.Name()] = state
+
+		if known {
+			log.Println("Found more data in", file.Name(), state.size-prev.size, "bytes")
+		} else {
+			log.Println("Found new file", file.Name())
+		}
+		service.HandlePcapUri(filepath.Join(watch_dir, file.Name()))
+	}
+
+	// Forget files that are gone, so a retention sweep doesn't leave this map
+	// growing for the length of the game.
+	for name := range seen {
+		if !present[name] {
+			delete(seen, name)
+		}
+	}
+}
+
 func (service *AssemblerService) WatchDir(watch_dir string) {
 	stat, err := os.Stat(watch_dir)
 	if err != nil {
@@ -477,19 +545,18 @@ func (service *AssemblerService) WatchDir(watch_dir string) {
 		log.Fatal("watch_dir is not a directory")
 	}
 
+	pollInterval, err := time.ParseDuration(*watchPollInterval)
+	if err != nil {
+		log.Fatal("Invalid watch-poll-interval duration: ", *watchPollInterval)
+	}
+
 	log.Println("Monitoring dir: ", watch_dir)
 
-	files, err := ioutil.ReadDir(watch_dir)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	for _, file := range files {
-		// accepts files with prefixes that start with .pcap (.pcapng .pcap1 etc)
-		if strings.HasPrefix(filepath.Ext(file.Name()), ".pcap") {
-			service.HandlePcapUri(filepath.Join(watch_dir, file.Name())) //FIXME; this is a little clunky
-		}
-	}
+	// The initial scan is also the recovery path: everything already in the
+	// dir gets offered, and anything ingested in a previous run is skipped by
+	// position rather than duplicated.
+	seen := make(map[string]pcapFileState)
+	service.scanDir(watch_dir, seen)
 
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
@@ -500,7 +567,10 @@ func (service *AssemblerService) WatchDir(watch_dir string) {
 
 	signalChan := make(chan os.Signal, 1)
 	signal.Notify(signalChan, os.Interrupt)
-	// Keep running until Interrupt
+
+	// Buffered to 1 and sent to non-blockingly: a burst of events during one
+	// scan collapses into a single follow-up scan.
+	wake := make(chan struct{}, 1)
 	go func() {
 		for {
 			select {
@@ -508,12 +578,10 @@ func (service *AssemblerService) WatchDir(watch_dir string) {
 				if !ok {
 					return
 				}
-				if event.Op&(fsnotify.Rename|fsnotify.Create|fsnotify.Write) != 0 {
-					// accepts files with prefixes that start with .pcap (.pcapng .pcap1 etc)
-					if strings.HasPrefix(filepath.Ext(event.Name), ".pcap") {
-						log.Println("Found new file", event.Name, event.Op.String())
-						time.Sleep(2 * time.Second) // FIXME; bit of race here between file creation and writes.
-						service.HandlePcapUri(event.Name)
+				if event.Op&(fsnotify.Rename|fsnotify.Create|fsnotify.Write) != 0 && isPcapName(event.Name) {
+					select {
+					case wake <- struct{}{}:
+					default:
 					}
 				}
 			case err, ok := <-watcher.Errors:
@@ -529,9 +597,37 @@ func (service *AssemblerService) WatchDir(watch_dir string) {
 	if err != nil {
 		log.Fatal(err)
 	}
-	<-signalChan
-	log.Println("Watcher stopped")
 
+	// The poll ticker is the safety net for hosts where inotify events never
+	// arrive at all -- Docker Desktop's Windows bind mounts being the case
+	// this was written for. Without it the assembler can sit idle for a whole
+	// game while files pile up in the watch dir.
+	var pollC <-chan time.Time
+	if pollInterval > 0 {
+		ticker := time.NewTicker(pollInterval)
+		defer ticker.Stop()
+		pollC = ticker.C
+		log.Println("Rescanning", watch_dir, "every", pollInterval, "as a fsnotify fallback")
+	} else {
+		log.Println("Poll fallback disabled; relying on fsnotify events alone")
+	}
+
+	// Keep running until Interrupt
+	for {
+		select {
+		case <-signalChan:
+			log.Println("Watcher stopped")
+			return
+		case <-wake:
+			// FIXME; bit of a race between file creation and writes. A partial
+			// read is not lost: the file's size changes, so the next scan
+			// re-offers it and only the new packets are ingested.
+			time.Sleep(2 * time.Second)
+			service.scanDir(watch_dir, seen)
+		case <-pollC:
+			service.scanDir(watch_dir, seen)
+		}
+	}
 }
 
 func (service *AssemblerService) HandlePcapUri(sourceName string) {

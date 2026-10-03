@@ -1,11 +1,14 @@
 import { useState } from "react";
 import {
   Rule,
+  RulePack,
   RuleTemplate,
   useAddRuleMutation,
   useCanRole,
   useDeleteRuleMutation,
+  useGetRulePacksQuery,
   useGetRulesQuery,
+  useInstallRulePackMutation,
   useMyRole,
   useReloadRulesMutation,
   useUpdateConfigMutation,
@@ -68,6 +71,8 @@ export function Rules() {
         autoreload={data.suricata?.autoreload ?? false}
         canEdit={canEdit}
       />
+
+      <RulePacksBar canEdit={canEdit} />
 
       {canEdit && (
         <TemplatesBar
@@ -223,6 +228,131 @@ function SuricataControlBar({
           />
         </button>
       </label>
+    </div>
+  );
+}
+
+/**
+ * Ready-made rule packs. Shown to every role -- knowing what exists is not a
+ * privileged fact -- but only operators get the install button.
+ *
+ * The tags each pack contributes are listed up front, because that is what the
+ * pack is actually for: the rules become filter chips in the flow list, and
+ * knowing which chips you are about to get is the decision being made here.
+ */
+function RulePacksBar({ canEdit }: { canEdit: boolean }) {
+  const { data } = useGetRulePacksQuery();
+  const [open, setOpen] = useState(false);
+  const [includeNoisy, setIncludeNoisy] = useState(true);
+  const [install, { isLoading }] = useInstallRulePackMutation();
+  const dispatch = useAppDispatch();
+
+  if (!data) return null;
+
+  const installedTotal = data.packs.reduce((n, p) => n + p.installed, 0);
+  const ruleTotal = data.packs.reduce((n, p) => n + p.total, 0);
+
+  async function onInstall(pack: RulePack) {
+    try {
+      const res = await install({
+        id: pack.id,
+        include_noisy: includeNoisy,
+      }).unwrap();
+      dispatch(
+        pushToast({
+          message:
+            res.added.length === 0
+              ? `${pack.name}: already installed`
+              : `${pack.name}: ${res.added.length} rule(s) added — tags: ${res.tags.join(", ")}`,
+          severity: res.added.length === 0 ? "info" : "success",
+        })
+      );
+    } catch (e: any) {
+      dispatch(
+        pushToast({
+          message: `${pack.name}: ${e?.data?.error ?? "install failed"}`,
+          severity: "danger",
+        })
+      );
+    }
+  }
+
+  return (
+    <div className="mb-4">
+      <button onClick={() => setOpen((o) => !o)} className="hax-btn text-xs">
+        rule packs ▾{" "}
+        <span className="text-hax-dim">
+          ({installedTotal}/{ruleTotal} installed)
+        </span>
+      </button>
+
+      {open && (
+        <div
+          className="mt-2 bg-hax-surface border border-hax-border rounded-sm p-3 flex flex-col gap-2"
+          style={{ boxShadow: "0 0 24px -10px rgba(168,85,247,0.4)" }}
+        >
+          <div className="text-[10px] uppercase tracking-[0.2em] text-hax-muted">
+            ▎known web attack shapes, pre-tagged
+          </div>
+
+          {canEdit && (
+            <label className="flex items-center gap-2 text-[10px] text-hax-muted">
+              <input
+                type="checkbox"
+                checked={includeNoisy}
+                onChange={(e) => setIncludeNoisy(e.target.checked)}
+              />
+              include rules marked noisy (they also match legitimate traffic)
+            </label>
+          )}
+
+          {data.packs.map((pack) => {
+            const done = pack.installed >= pack.total;
+            const tags = Array.from(new Set(pack.rules.map((r) => r.tag)));
+            return (
+              <div
+                key={pack.id}
+                className="border border-hax-border rounded-sm px-3 py-2 flex items-start gap-3"
+              >
+                <div className="flex-1 min-w-0">
+                  <div className="text-xs text-hax-accent-bright">
+                    {pack.name}{" "}
+                    <span className="text-hax-dim">
+                      {pack.installed}/{pack.total}
+                    </span>
+                  </div>
+                  <div className="text-[10px] text-hax-muted">
+                    {pack.description}
+                  </div>
+                  <div className="text-[10px] text-hax-dim mt-1 truncate">
+                    tags: {tags.join(", ")}
+                  </div>
+                </div>
+                {canEdit && (
+                  <button
+                    className="hax-btn text-[10px] shrink-0"
+                    disabled={isLoading || done}
+                    onClick={() => onInstall(pack)}
+                    title={
+                      done
+                        ? "every rule in this pack is already in the file"
+                        : "appends the missing rules; installing twice is a no-op"
+                    }
+                  >
+                    {done ? "installed" : "install"}
+                  </button>
+                )}
+              </div>
+            );
+          })}
+
+          <div className="text-[10px] text-hax-dim">
+            All pack rules are <span className="text-hax-text">alert</span>,
+            never drop — a misfiring drop takes down your own service. Turn one
+            into a drop from the table below once you have seen what it matches.
+          </div>
+        </div>
+      )}
     </div>
   );
 }

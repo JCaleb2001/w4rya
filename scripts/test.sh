@@ -15,7 +15,10 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 IMAGE=w4rya-api:latest
 
 if docker image inspect "$IMAGE" >/dev/null 2>&1; then
-  exec docker run --rm \
+  # MSYS_NO_PATHCONV: stop Git-Bash from mangling the container-side paths
+  # below (-w /app, tests/) into host Windows paths — same fix as install.sh's
+  # compose() helper.
+  exec env MSYS_NO_PATHCONV=1 docker run --rm \
     -v "$PWD/services/api:/app:ro" \
     -e W4RYA_SECRET_KEY=test-secret-not-a-real-key \
     -e TIMESCALE='postgres://w4rya@127.0.0.1:1/w4rya' \
@@ -27,5 +30,5 @@ fi
 COMPOSE_FILE="$(awk -F= '/^W4RYA_COMPOSE_FILE=/{print $2}' .env 2>/dev/null | tail -1)"
 COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.yml}"
 echo "note: $IMAGE not built yet — running inside the live api container instead." >&2
-exec docker compose -f "$COMPOSE_FILE" exec -T api \
+exec env MSYS_NO_PATHCONV=1 docker compose -f "$COMPOSE_FILE" exec -T api \
   python -m pytest /app/tests -p no:cacheprovider "$@"

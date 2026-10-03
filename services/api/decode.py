@@ -11,13 +11,17 @@ layer.
 from __future__ import annotations
 
 import base64
-import gzip
 import re
 import urllib.parse
 import zlib
 
 MAX_DEPTH = 4
 MAX_PREVIEW = 4096
+# Hard cap on decompressed output, independent of what the compressed
+# header claims: `data` here is bytes off the wire, so a small hostile
+# gzip/deflate blob (a "decompression bomb") must not be able to force
+# unbounded memory/CPU just by being captured and viewed in the decoder.
+MAX_DECOMPRESSED = 8 * 1024 * 1024
 
 _BASE64_RE = re.compile(rb"^[A-Za-z0-9+/_=\-]{8,}$")
 _HEX_RE = re.compile(rb"^(?:[0-9a-fA-F]{2}){4,}$")
@@ -32,7 +36,8 @@ def _looks_texty(data: bytes, threshold: float = 0.85) -> bool:
 
 def try_gzip(data: bytes) -> bytes | None:
     try:
-        out = gzip.decompress(data)
+        d = zlib.decompressobj(zlib.MAX_WBITS | 16)  # gzip container
+        out = d.decompress(data, MAX_DECOMPRESSED)
     except Exception:
         return None
     return out if out else None
@@ -41,7 +46,8 @@ def try_gzip(data: bytes) -> bytes | None:
 def try_deflate(data: bytes) -> bytes | None:
     for wbits in (zlib.MAX_WBITS, -zlib.MAX_WBITS):
         try:
-            out = zlib.decompress(data, wbits)
+            d = zlib.decompressobj(wbits)
+            out = d.decompress(data, MAX_DECOMPRESSED)
             if out:
                 return out
         except Exception:
