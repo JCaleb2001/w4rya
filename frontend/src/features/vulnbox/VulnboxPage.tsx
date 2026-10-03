@@ -10,8 +10,8 @@ import { ReconCard } from "./components/ReconCard";
 import { Job, JobKind } from "./types";
 
 /**
- * /vulnbox — prepare and defend our own vulnbox, in game-day order:
- * key → preflight → recon → backup. The backend is the security boundary
+ * /vulnbox — prepare and defend our own vulnbox, in the order a game needs
+ * it: key → preflight → recon → backup. The backend is the security boundary
  * (403 with {required_role, your_role}); role checks here are UX only.
  */
 export function VulnboxPage() {
@@ -57,7 +57,7 @@ export function VulnboxPage() {
     );
   }
 
-  const { target, key, jobs, defaults } = data;
+  const { target, key, jobs, presets } = data;
 
   return (
     <div className="p-6 bg-hax-bg text-hax-text font-mono min-h-full">
@@ -99,7 +99,7 @@ export function VulnboxPage() {
         <KeyCard status={key} canAdmin={canAdmin} busy={busy} />
         <PreflightCard
           job={activeOr(jobs.current, "preflight", jobs.last.preflight)}
-          defaults={defaults}
+          presets={presets}
           canOperate={canOperate}
           canAdmin={canAdmin}
           busy={busy}
@@ -107,6 +107,7 @@ export function VulnboxPage() {
         />
         <ReconCard
           job={activeOr(jobs.current, "recon", jobs.last.recon)}
+          servicePorts={target.service_ports}
           canOperate={canOperate}
           canAdmin={canAdmin}
           busy={busy}

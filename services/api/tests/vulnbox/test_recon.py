@@ -10,7 +10,8 @@ import app_config
 from vulnbox import config as vconfig
 from vulnbox import keys, recon, ssh
 
-TARGET = vconfig.Target(host="10.60.3.2", port=22, user="root", services_path="/root/services")
+TARGET = vconfig.Target(host="192.0.2.10", port=22, user="root", services_path="/root/services")
+RANGES = vconfig.parse_port_ranges("9000-9999")  # a typical service-port setting
 
 SAMPLE = "\n".join([
     "DIR\tnotes",
@@ -25,13 +26,13 @@ SAMPLE = "\n".join([
 
 
 def test_parse_and_build_maps_containers_by_compose_workdir():
-    out = recon.build(recon.parse(SAMPLE), TARGET.services_path)
+    out = recon.build(recon.parse(SAMPLE), TARGET.services_path, RANGES)
     svcs = {s["name"]: s for s in out["services"]}
     assert set(svcs) == {"notes", "shop"}  # the hostile name is dropped
-    assert svcs["notes"]["game_ports"] == [9001]
+    assert svcs["notes"]["service_ports"] == [9001]
     assert len(svcs["notes"]["containers"]) == 2
     # nested compose dir (.../shop/deploy) still belongs to shop; a range expands
-    assert svcs["shop"]["game_ports"] == [9100, 9101]
+    assert svcs["shop"]["service_ports"] == [9100, 9101]
 
 
 def test_unsafe_name_and_unmatched_containers_become_notes():
@@ -42,13 +43,18 @@ def test_unsafe_name_and_unmatched_containers_become_notes():
     assert "something informational" in notes
 
 
-def test_non_game_ports_are_kept_but_not_game_ports():
-    out = recon.build(recon.parse(
-        "DIR\tapi\nCTR\tapi-1\t0.0.0.0:8443->443/tcp\tapi:1\t/root/services/api\n"
-    ), TARGET.services_path)
-    svc = out["services"][0]
+API_ONLY = "DIR\tapi\nCTR\tapi-1\t0.0.0.0:8443->443/tcp\tapi:1\t/root/services/api\n"
+
+
+def test_ports_outside_the_ranges_are_kept_but_not_service_ports():
+    svc = recon.build(recon.parse(API_ONLY), TARGET.services_path, RANGES)["services"][0]
     assert svc["ports"] == [8443]
-    assert svc["game_ports"] == []
+    assert svc["service_ports"] == []
+
+
+def test_without_ranges_every_published_port_is_a_service_port():
+    svc = recon.build(recon.parse(API_ONLY), TARGET.services_path)["services"][0]
+    assert svc["service_ports"] == [8443]
 
 
 def test_port_range_expansion_is_capped():
@@ -59,22 +65,22 @@ def test_port_range_expansion_is_capped():
 
 
 def test_to_config_services_is_valid_config():
-    out = recon.build(recon.parse(SAMPLE), TARGET.services_path)
+    out = recon.build(recon.parse(SAMPLE), TARGET.services_path, RANGES)
     entries = recon.to_config_services(out["services"], TARGET.host)
     assert {(e["name"], e["port"]) for e in entries} == {("notes", 9001), ("shop", 9100), ("shop", 9101)}
     for e in entries:
         assert app_config.validate_service(e) == e  # round-trips the existing validator
-        assert e["ip"] == "10.60.3.2"
+        assert e["ip"] == "192.0.2.10"
 
 
 def test_merge_replaces_same_ip_port_and_keeps_others():
     existing = [
-        {"name": "old", "ip": "10.60.3.2", "port": 9001, "notes": ""},
-        {"name": "manual", "ip": "10.60.3.2", "port": 9500, "notes": "keep me"},
+        {"name": "old", "ip": "192.0.2.10", "port": 9001, "notes": ""},
+        {"name": "manual", "ip": "192.0.2.10", "port": 9500, "notes": "keep me"},
     ]
     imported = [
-        {"name": "notes", "ip": "10.60.3.2", "port": 9001, "notes": "imported from recon"},
-        {"name": "shop", "ip": "10.60.3.2", "port": 9100, "notes": "imported from recon"},
+        {"name": "notes", "ip": "192.0.2.10", "port": 9001, "notes": "imported from recon"},
+        {"name": "shop", "ip": "192.0.2.10", "port": 9100, "notes": "imported from recon"},
     ]
     merged, added, updated = recon.merge_services(existing, imported)
     by_port = {e["port"]: e for e in merged}

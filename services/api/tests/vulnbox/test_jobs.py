@@ -57,7 +57,7 @@ def test_failure_is_recorded_with_its_message(vbox_dir):
 def test_dead_worker_reads_as_interrupted(vbox_dir):
     # A "running" record with nobody holding the lock = the worker died.
     stale = {"id": "x", "kind": "backup", "state": "running", "started_by": "a",
-             "started_at": "2026-10-15T09:00:00+00:00", "finished_at": None,
+             "started_at": "2000-01-01T00:00:00+00:00", "finished_at": None,
              "result": None, "error": None}
     vconfig.job_path().write_text(json.dumps({"current": stale, "last": {}}))
     snap = jobs.snapshot()

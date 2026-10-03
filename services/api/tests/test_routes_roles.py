@@ -41,7 +41,7 @@ MATRIX = [
     ("GET",    "/vulnbox/key/private",                           "admin"),
     ("DELETE", "/vulnbox/known-host",                            "admin"),
     ("POST",   "/vulnbox/import-services",                       "admin"),
-    ("POST",   "/vulnbox/seed-defaults",                         "admin"),
+    ("POST",   "/vulnbox/presets/somepreset",                    "admin"),
     ("POST",   "/vulnbox/preflight",                             "operator"),
     ("POST",   "/vulnbox/recon",                                 "operator"),
     ("POST",   "/vulnbox/backup",                                "operator"),

@@ -11,8 +11,8 @@ import { BTN, BTN_PRIMARY, Card, ErrorLine, OkLine, errorText } from "./Card";
 
 /**
  * Step 1 — the key the A/D platform installs on the vulnbox.
- * Only the public half is ever rendered: the game is screen-recorded
- * (handbook §6.12), so the private half is a file download and nothing else.
+ * Only the public half is ever rendered: A/D games may record or share
+ * screens, so the private half is a file download and nothing else.
  */
 export function KeyCard({
   status,
@@ -66,10 +66,10 @@ export function KeyCard({
   }
 
   return (
-    <Card step={1} title="ssh key" when="before 10:30">
+    <Card step={1} title="ssh key" when="before the game">
       <p className="text-[10px] text-hax-dim leading-relaxed">
-        Paste the public key into the A/D platform. Organizers boot the
-        vulnboxes with the submitted keys at 10:30.
+        Submit the public key to the A/D platform; the vulnbox is provisioned
+        with the keys submitted before the game.
       </p>
 
       {!status.exists && (

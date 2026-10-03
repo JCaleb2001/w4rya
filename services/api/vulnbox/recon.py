@@ -3,8 +3,10 @@ ports their containers publish. Read-only on the box.
 
 A container belongs to a service directory when its docker compose working
 directory is that directory (or below it — a compose file in a subfolder).
-Ports in the game range (9000-9999) are what other teams and the checker hit;
-those are the ones worth importing into /config → services.
+Published ports inside the configured service ranges (`vulnbox_service_ports`)
+are the ones other teams and the checker reach; those are what gets imported
+into /config → services. With no ranges configured, every published port
+counts.
 """
 
 from __future__ import annotations
@@ -30,10 +32,6 @@ def _host_ports(ports_field: str) -> list[int]:
     return sorted(found)
 
 
-def _is_game_port(port: int) -> bool:
-    return config.GAME_PORT_MIN <= port <= config.GAME_PORT_MAX
-
-
 def parse(stdout: str) -> dict:
     """Split the remote script's tab-separated records by kind."""
     dirs: list[str] = []
@@ -56,7 +54,8 @@ def parse(stdout: str) -> dict:
     return {"dirs": dirs, "containers": containers, "notes": notes}
 
 
-def build(parsed: dict, services_path: str) -> dict:
+def build(parsed: dict, services_path: str,
+          service_ports: config.PortRanges = ()) -> dict:
     """Join directories and containers into one row per service."""
     root = services_path.rstrip("/")
     notes = list(parsed["notes"])
@@ -77,7 +76,7 @@ def build(parsed: dict, services_path: str) -> dict:
         services.append({
             "name": name,
             "ports": ports,
-            "game_ports": [p for p in ports if _is_game_port(p)],
+            "service_ports": [p for p in ports if config.in_port_ranges(p, service_ports)],
             "containers": [
                 {"name": c["name"], "image": c["image"], "ports": c["ports"]} for c in mine
             ],
@@ -92,11 +91,11 @@ def build(parsed: dict, services_path: str) -> dict:
 
 
 def to_config_services(services: list[dict], host: str) -> list[dict]:
-    """Recon rows → /config services entries, one per game port."""
+    """Recon rows → /config services entries, one per service port."""
     return [
         {"name": s["name"], "ip": host, "port": p, "notes": "imported from recon"}
         for s in services
-        for p in s["game_ports"]
+        for p in s["service_ports"]
     ]
 
 
@@ -118,7 +117,7 @@ def merge_services(existing: list[dict], imported: list[dict]) -> tuple[list[dic
     return merged, added, updated
 
 
-def run(target: config.Target) -> dict:
+def run(target: config.Target, service_ports: config.PortRanges = ()) -> dict:
     """Inventory the vulnbox. Raises RuntimeError with a UI-ready message."""
     if not keys.status().get("exists"):
         raise RuntimeError("no key yet — generate one and submit it to the platform first")
@@ -128,4 +127,4 @@ def run(target: config.Target) -> dict:
     )
     if proc.returncode != 0:
         raise RuntimeError(ssh.describe_failure(proc))
-    return build(parse(proc.stdout), target.services_path)
+    return build(parse(proc.stdout), target.services_path, service_ports)

@@ -108,7 +108,7 @@ def wired(box, vbox_dir, monkeypatch):
         )
     monkeypatch.setattr(ssh, "run_remote_script", fake_remote)
     monkeypatch.setattr(backup, "remote_url", lambda target, name: str(box["root"] / f"{name}.git"))
-    target = vconfig.Target(host="10.60.3.2", port=22, user="root",
+    target = vconfig.Target(host="192.0.2.10", port=22, user="root",
                             services_path=str(box["services"]))
     return target
 
@@ -139,5 +139,10 @@ def test_run_without_key_errors_without_ssh(vbox_dir, monkeypatch):
 
 
 def test_remote_url_is_relative_to_the_remote_home():
-    target = vconfig.Target(host="10.60.3.2", port=22, user="root", services_path="/root/services")
-    assert backup.remote_url(target, "web") == "root@10.60.3.2:.w4rya-backups/web.git"
+    target = vconfig.Target(host="192.0.2.10", port=22, user="root", services_path="/root/services")
+    assert backup.remote_url(target, "web") == "root@192.0.2.10:.w4rya-backups/web.git"
+
+
+def test_remote_url_brackets_an_ipv6_host():
+    target = vconfig.Target(host="2001:db8::2", port=22, user="root", services_path="/root/services")
+    assert backup.remote_url(target, "web") == "root@[2001:db8::2]:.w4rya-backups/web.git"

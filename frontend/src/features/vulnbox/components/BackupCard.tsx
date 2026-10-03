@@ -18,9 +18,9 @@ const LOCAL_CLS: Record<LocalStatus, string> = {
 
 /**
  * Step 4 — git baseline + snapshots of every service. The first run is the
- * baseline: take it in the 11:00–12:00 window, before other teams can reach
- * the box. Repos live outside the service dirs on the vulnbox (no .git in a
- * served directory), and are mirrored to ./vulnbox-data/backups/ here.
+ * baseline: take it before other teams can reach the box, so it holds the
+ * original code. Repos live outside the service dirs on the vulnbox (no .git
+ * in a served directory), and are mirrored to ./vulnbox-data/backups/ here.
  */
 export function BackupCard({
   job,
@@ -37,7 +37,7 @@ export function BackupCard({
   const everRan = Boolean(job && job.state !== "running");
 
   return (
-    <Card step={4} title="backup" when="11:00 – 12:00">
+    <Card step={4} title="backup" when="before the network opens">
       <p className="text-[10px] text-hax-dim leading-relaxed">
         First run = baseline (the original code). Later runs commit only what
         changed. Local copies: <code className="text-hax-muted">./vulnbox-data/backups/</code>

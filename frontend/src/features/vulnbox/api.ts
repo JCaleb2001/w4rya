@@ -9,7 +9,7 @@ import {
   Job,
   JobKind,
   KeyStatus,
-  SeedResult,
+  PresetResult,
   VulnboxOverview,
 } from "./types";
 
@@ -37,8 +37,8 @@ const vulnboxApi = w4ryaApi
         query: () => ({ url: "/vulnbox/import-services", method: "POST" }),
         invalidatesTags: ["Services"],
       }),
-      seedVulnboxDefaults: builder.mutation<SeedResult, void>({
-        query: () => ({ url: "/vulnbox/seed-defaults", method: "POST" }),
+      applyVulnboxPreset: builder.mutation<PresetResult, string>({
+        query: (id) => ({ url: `/vulnbox/presets/${encodeURIComponent(id)}`, method: "POST" }),
         invalidatesTags: ["Vulnbox", "Config", "TickInfo", "FlagRegex"],
       }),
     }),
@@ -50,7 +50,7 @@ export const {
   useForgetVulnboxHostKeyMutation,
   useStartVulnboxJobMutation,
   useImportVulnboxServicesMutation,
-  useSeedVulnboxDefaultsMutation,
+  useApplyVulnboxPresetMutation,
 } = vulnboxApi;
 
 /** The private key is a file download (never JSON), via a plain anchor. */

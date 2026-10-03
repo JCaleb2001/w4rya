@@ -29,8 +29,10 @@ export interface VulnboxTarget {
   port: number | null;
   user: string | null;
   services_path: string | null;
-  /** Set when the target can't be resolved (e.g. team_id not configured). */
+  /** Set when the target can't be resolved (e.g. vm_ip not configured). */
   error: string | null;
+  /** The vulnbox_service_ports setting ("9000-9999,31337"); "" = every published port. */
+  service_ports: string;
 }
 
 export type CheckStatus = "ok" | "fail" | "skipped";
@@ -55,7 +57,8 @@ export interface ReconContainer {
 export interface ReconService {
   name: string;
   ports: number[];
-  game_ports: number[];
+  /** The published ports inside the configured service-port ranges. */
+  service_ports: number[];
   containers: ReconContainer[];
 }
 
@@ -96,10 +99,16 @@ export interface VulnboxOverview {
       backup?: Job<BackupResult>;
     };
   };
-  defaults: {
-    values: Record<string, string | number>;
-    applied: boolean;
-  };
+  presets: PresetInfo[];
+}
+
+/** A named bundle of /config values for one game (services/api/vulnbox/presets.py). */
+export interface PresetInfo {
+  id: string;
+  name: string;
+  values: Record<string, string | number>;
+  /** True when /config already holds every value of this preset. */
+  applied: boolean;
 }
 
 export interface ImportResult {
@@ -108,7 +117,8 @@ export interface ImportResult {
   updated: number;
 }
 
-export interface SeedResult {
+export interface PresetResult {
+  preset: string;
   applied: Record<string, string | number>;
   /** The same values as .env lines — the assembler reads them at boot. */
   env: Record<string, string>;

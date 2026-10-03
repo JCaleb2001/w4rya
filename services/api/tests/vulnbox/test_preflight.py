@@ -10,7 +10,7 @@ import pytest
 from vulnbox import config as vconfig
 from vulnbox import keys, preflight, ssh
 
-TARGET = vconfig.Target(host="10.60.3.2", port=22, user="root", services_path="/root/services")
+TARGET = vconfig.Target(host="192.0.2.10", port=22, user="root", services_path="/root/services")
 
 
 def by_name(checks):
@@ -51,7 +51,7 @@ def test_auth_failure_is_distinguished(vbox_dir, monkeypatch):
     monkeypatch.setattr(
         ssh, "run_remote_script",
         lambda *a, **k: subprocess.CompletedProcess(
-            [], 255, stdout="", stderr="root@10.60.3.2: Permission denied (publickey)."),
+            [], 255, stdout="", stderr="root@192.0.2.10: Permission denied (publickey)."),
     )
     checks = by_name(preflight.run(TARGET))
     assert checks["reachable"]["status"] == "ok"

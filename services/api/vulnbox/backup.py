@@ -54,7 +54,10 @@ def parse(stdout: str) -> dict:
 
 
 def remote_url(target: config.Target, name: str) -> str:
-    return f"{target.user}@{target.host}:{REMOTE_ROOT}/{name}.git"
+    # scp-style git URLs need an IPv6 literal bracketed, or its colons read as
+    # the host/path separator.
+    host = f"[{target.host}]" if config.is_ipv6(target.host) else target.host
+    return f"{target.user}@{host}:{REMOTE_ROOT}/{name}.git"
 
 
 def _git(args: list[str], target: config.Target, cwd: Optional[Path] = None):

@@ -4,6 +4,10 @@ Everything the rest of the package needs to know about *where* things live and
 *what a valid value looks like* lives here, defined once. No AI, no network —
 pure configuration.
 
+Nothing here is specific to one A/D game. Values that differ per game (round
+length, flag format, which ports are game services, ...) are settings in
+/config, and named bundles of them live in `presets.py` as data.
+
 The data directory is env-driven (`W4RYA_VULNBOX_DIR`, default
 `/app/vulnbox-data`) exactly like `W4RYA_USERS_FILE` / `W4RYA_RULES_FILE`, so
 the test suite can redirect it at a tmp dir. Nothing here touches the
@@ -29,6 +33,10 @@ class Target:
     port: int
     user: str
     services_path: str
+
+
+# Inclusive (low, high) port ranges. Empty means "no filter".
+PortRanges = tuple[tuple[int, int], ...]
 
 
 # --- where things live -----------------------------------------------------
@@ -75,29 +83,10 @@ def job_lock_path() -> Path:
 # can't blow up the local clone or the vulnbox's disk.
 MAX_FILE_BYTES = 25 * 1024 * 1024
 
-# SSH/git must give up quickly when the VPN is down rather than hanging a whole
-# background job; the game-day network is either up or it isn't.
+# SSH/git must give up quickly when the game network is down rather than
+# hanging a whole background job: the VPN is either up or it isn't.
 CONNECT_TIMEOUT = 8
 RUN_TIMEOUT = 120
-
-# ECSC 2026: the game firewall only lets other teams reach the vulnbox on
-# 9000-9999, so a published port in this range is a game service; anything
-# else is our own tooling.
-GAME_PORT_MIN = 9000
-GAME_PORT_MAX = 9999
-
-# The ECSC 2026 A/D values (handbook §6.4 + the A/D wiki), applied by the
-# "ECSC 2026 defaults" button. flag_regex is the official pattern *unanchored*:
-# w4rya searches for flags inside traffic, so ^...$ would never match.
-# flag_lifetime counts ticks including the current one (see Corrie's
-# `tick - (flagLifetime - 1)`): a flag is valid in its round + 4 more = 5.
-# start_date is 2026-10-15 11:00 CEST (= 09:00 UTC).
-ECSC2026_DEFAULTS = {
-    "flag_regex": r"ECSC\{[A-Za-z0-9_-]{32}\}",
-    "tick_length": 60000,
-    "flag_lifetime": 5,
-    "start_date": "2026-10-15T09:00:00Z",
-}
 
 
 # --- validation ------------------------------------------------------------
@@ -110,44 +99,36 @@ SERVICE_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 # SSH username charset (POSIX-portable account names).
 USERNAME_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 
+# DNS hostname charset; ip literals (v4 and v6) are checked separately.
+_HOSTNAME_RE = re.compile(r"^[A-Za-z0-9.-]+$")
+
 
 def is_valid_service_name(name: str) -> bool:
     return bool(name) and name not in (".", "..") and SERVICE_RE.match(name) is not None
 
 
-def resolve_host(team_id: str, override: str) -> str:
-    """The vulnbox address to SSH into.
+def resolve_host(raw) -> str:
+    """The vulnbox address to ssh into — /config's `vm_ip` ("our team vm ip").
 
-    An explicit `vulnbox_ip` override always wins (demo slots, self-hosting).
-    Otherwise derive the ECSC game-network address `10.60.<team_id>.2` from the
-    numeric team id. Raises ValueError when neither is usable — far better than
-    silently SSHing at a malformed `10.60..2`.
+    Raises ValueError with a fix-it message when it is unset or malformed, so a
+    typo fails before any connection is attempted.
     """
-    override = (override or "").strip()
-    if override:
-        # Accept a bare host or an ip; validate an ip-looking value so a typo
-        # fails here, not mid-connection.
-        try:
-            ipaddress.ip_address(override)
-        except ValueError:
-            if not re.match(r"^[A-Za-z0-9.-]+$", override):
-                raise ValueError(f"invalid vulnbox_ip override: {override!r}")
-        return override
-    team_id = (team_id or "").strip()
-    if not team_id.isdigit():
-        raise ValueError(
-            "cannot derive the vulnbox address: set team_id (a number) in "
-            "/config, or set vulnbox_ip explicitly"
-        )
-    n = int(team_id)
-    # 0 is the "never configured" default (TEAM_ID unset); ECSC team ids start
-    # at 1 (the NOP team) and .255 would be the subnet broadcast.
-    if not (1 <= n <= 254):
-        raise ValueError(
-            f"team_id {n} is not a game team id — set your team id in /config "
-            "(or set vulnbox_ip explicitly)"
-        )
-    return f"10.60.{n}.2"
+    host = str(raw or "").strip()
+    if not host:
+        raise ValueError("set our team's vulnbox address (vm_ip) in /config")
+    try:
+        ipaddress.ip_address(host)
+    except ValueError:
+        if not _HOSTNAME_RE.match(host):
+            raise ValueError(f"vm_ip is not a valid ip or hostname: {host!r}")
+    return host
+
+
+def is_ipv6(host: str) -> bool:
+    try:
+        return ipaddress.ip_address(host).version == 6
+    except ValueError:
+        return False
 
 
 def validate_port(raw) -> int:
@@ -174,20 +155,38 @@ def validate_services_path(raw) -> str:
     return path
 
 
-def validate_host_override(raw) -> str:
-    """Write-time check for the vulnbox_ip config key. Empty is allowed
-    (means 'derive from team_id'); a non-empty value must be a valid ip or
-    hostname."""
-    value = str(raw or "").strip()
-    if not value:
-        return ""
-    try:
-        ipaddress.ip_address(value)
-        return value
-    except ValueError:
-        if not re.match(r"^[A-Za-z0-9.-]+$", value):
-            raise ValueError(f"invalid vulnbox_ip: {value!r}")
-        return value
+def parse_port_ranges(raw) -> PortRanges:
+    """'9000-9999, 31337' → ((9000, 9999), (31337, 31337)).
+
+    Used for `vulnbox_service_ports`: which published ports are game services
+    (the ones other teams and the checker reach) as opposed to our own tooling.
+    Empty → () → every published port counts.
+    """
+    ranges: list[tuple[int, int]] = []
+    for part in str(raw or "").replace(" ", "").split(","):
+        if not part:
+            continue
+        lo_s, sep, hi_s = part.partition("-")
+        try:
+            lo = int(lo_s)
+            hi = int(hi_s) if sep else lo
+        except ValueError:
+            raise ValueError(f"invalid port or range: {part!r} (use e.g. 9000-9999,31337)")
+        if not (1 <= lo <= hi <= 65535):
+            raise ValueError(f"invalid port range: {part!r}")
+        ranges.append((lo, hi))
+    return tuple(ranges)
+
+
+def in_port_ranges(port: int, ranges: PortRanges) -> bool:
+    return not ranges or any(lo <= port <= hi for lo, hi in ranges)
+
+
+def validate_service_ports(raw) -> str:
+    """Write-time check for `vulnbox_service_ports`; returns the normalized form."""
+    return ",".join(
+        str(lo) if lo == hi else f"{lo}-{hi}" for lo, hi in parse_port_ranges(raw)
+    )
 
 
 # --- filesystem (lazy; never at import) ------------------------------------

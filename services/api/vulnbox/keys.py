@@ -2,8 +2,8 @@
 
 Generated with `ssh-keygen` (ed25519). The private key is written 0600 and is
 only ever served as a file download — never returned in a JSON body or
-rendered on screen (ECSC §6.12 screen recording). The public key is safe to
-show and copy.
+rendered on screen, since A/D games may record or share players' screens.
+The public key is safe to show and copy.
 
 Files are chowned to the data directory's owner, same reason as
 `user_store._write_atomic`: the api runs as root inside the container over a

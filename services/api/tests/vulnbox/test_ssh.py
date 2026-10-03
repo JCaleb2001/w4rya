@@ -10,14 +10,14 @@ from vulnbox import config as vconfig
 
 
 def test_ssh_argv_has_hardening_and_no_insecure_hostkey(vbox_dir):
-    argv = ssh.ssh_argv("10.60.3.2", 22, "root")
+    argv = ssh.ssh_argv("192.0.2.10", 22, "root")
     joined = " ".join(argv)
     assert argv[0] == "ssh"
     assert "BatchMode=yes" in joined
     assert "IdentitiesOnly=yes" in joined
     assert "StrictHostKeyChecking=accept-new" in joined
     assert "ConnectTimeout=" in joined
-    assert "root@10.60.3.2" in argv
+    assert "root@192.0.2.10" in argv
     # the insecure patterns from the pasted script must never appear
     assert "StrictHostKeyChecking=no" not in joined
     assert "UserKnownHostsFile=/dev/null" not in joined
@@ -52,7 +52,7 @@ def test_run_remote_script_builds_bash_stdin(vbox_dir, monkeypatch):
         return subprocess.CompletedProcess(argv, 0, stdout="OK\n", stderr="")
     monkeypatch.setattr(subprocess, "run", fake_run)
 
-    res = ssh.run_remote_script("recon", ["/root/services"], host="10.60.3.2", port=22, user="root")
+    res = ssh.run_remote_script("recon", ["/root/services"], host="192.0.2.10", port=22, user="root")
     assert res.returncode == 0
     # script delivered on stdin, remote command runs bash -s with the arg quoted
     assert "bash -s" in captured["argv"][-1]

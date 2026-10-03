@@ -71,6 +71,6 @@ def test_forget_host_key(vbox_dir):
     from vulnbox import config as vconfig
     assert keys.forget_host_key() is False  # nothing pinned yet
     kh = vconfig.known_hosts_path()
-    kh.write_text("10.60.3.2 ssh-ed25519 AAAA...\n")
+    kh.write_text("192.0.2.10 ssh-ed25519 AAAA...\n")
     assert keys.forget_host_key() is True
     assert not kh.exists()

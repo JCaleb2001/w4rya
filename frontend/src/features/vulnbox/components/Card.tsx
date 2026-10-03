@@ -11,7 +11,7 @@ export function Card({
 }: {
   step: number;
   title: string;
-  /** Where this card sits on the game-day timeline, e.g. "before 10:30". */
+  /** Which phase of a game this card belongs to, e.g. "before the game". */
   when: string;
   children: ReactNode;
 }) {

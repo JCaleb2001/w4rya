@@ -6,40 +6,55 @@ import app_config
 from vulnbox import config as vconfig
 
 
-# --- resolve_host ----------------------------------------------------------
+# --- resolve_host (from /config's vm_ip) -----------------------------------
 
-def test_resolve_host_derives_from_team_id():
-    assert vconfig.resolve_host("3", "") == "10.60.3.2"
-    assert vconfig.resolve_host("1", "") == "10.60.1.2"
-
-
-def test_resolve_host_override_wins():
-    assert vconfig.resolve_host("3", "10.9.9.9") == "10.9.9.9"
-    assert vconfig.resolve_host("3", "vulnbox.demo") == "vulnbox.demo"
+@pytest.mark.parametrize("raw", ["192.0.2.10", "2001:db8::2", "vulnbox.example", " 192.0.2.10 "])
+def test_resolve_host_accepts_ips_and_hostnames(raw):
+    assert vconfig.resolve_host(raw) == raw.strip()
 
 
-def test_resolve_host_raises_without_usable_input():
+@pytest.mark.parametrize("raw", ["", None, "   "])
+def test_resolve_host_unset_says_how_to_fix_it(raw):
+    with pytest.raises(ValueError, match="vm_ip"):
+        vconfig.resolve_host(raw)
+
+
+@pytest.mark.parametrize("raw", ["192.0.2.10; rm -rf /", "a b", "host$(id)"])
+def test_resolve_host_rejects_junk(raw):
     with pytest.raises(ValueError):
-        vconfig.resolve_host("", "")
+        vconfig.resolve_host(raw)
+
+
+def test_is_ipv6():
+    assert vconfig.is_ipv6("2001:db8::2")
+    assert not vconfig.is_ipv6("192.0.2.10")
+    assert not vconfig.is_ipv6("vulnbox.example")
+
+
+# --- service port ranges ----------------------------------------------------
+
+def test_parse_port_ranges():
+    assert vconfig.parse_port_ranges("9000-9999, 31337") == ((9000, 9999), (31337, 31337))
+    assert vconfig.parse_port_ranges("") == ()
+    assert vconfig.parse_port_ranges(None) == ()
+
+
+@pytest.mark.parametrize("raw", ["abc", "10-", "0", "70000", "9999-9000", "1-2-3"])
+def test_parse_port_ranges_rejects_bad_input(raw):
     with pytest.raises(ValueError):
-        vconfig.resolve_host("notanumber", "")
+        vconfig.parse_port_ranges(raw)
 
 
-def test_resolve_host_rejects_out_of_range_team_id():
-    with pytest.raises(ValueError):
-        vconfig.resolve_host("300", "")
+def test_in_port_ranges_with_no_ranges_matches_everything():
+    assert vconfig.in_port_ranges(22, ())
+    ranges = vconfig.parse_port_ranges("9000-9999")
+    assert vconfig.in_port_ranges(9000, ranges)
+    assert not vconfig.in_port_ranges(8080, ranges)
 
 
-def test_resolve_host_treats_unconfigured_team_zero_as_unset():
-    # "0" is the TEAM_ID default when nobody configured it
-    with pytest.raises(ValueError, match="team id"):
-        vconfig.resolve_host("0", "")
-    assert vconfig.resolve_host("0", "10.9.9.9") == "10.9.9.9"
-
-
-def test_resolve_host_rejects_bogus_override():
-    with pytest.raises(ValueError):
-        vconfig.resolve_host("3", "10.0.0.1; rm -rf /")
+def test_validate_service_ports_normalizes():
+    assert vconfig.validate_service_ports(" 9000-9999 ,31337,31337-31337") == "9000-9999,31337,31337"
+    assert vconfig.validate_service_ports("") == ""
 
 
 # --- service name guard ----------------------------------------------------
@@ -78,17 +93,13 @@ def test_validate_services_path_must_be_absolute():
         vconfig.validate_services_path("root/services")
 
 
-def test_validate_host_override_allows_empty():
-    assert vconfig.validate_host_override("") == ""
-    assert vconfig.validate_host_override("10.60.3.2") == "10.60.3.2"
-    with pytest.raises(ValueError):
-        vconfig.validate_host_override("bad ip")
-
-
 # --- app_config integration ------------------------------------------------
 
+VULNBOX_KEYS = ("vulnbox_user", "vulnbox_ssh_port", "vulnbox_services_path", "vulnbox_service_ports")
+
+
 def test_vulnbox_keys_are_registered_scalars():
-    for key in ("vulnbox_ip", "vulnbox_user", "vulnbox_ssh_port", "vulnbox_services_path"):
+    for key in VULNBOX_KEYS:
         assert key in app_config.SCALAR_KEYS
         assert key in app_config.DEFAULTS
 
@@ -97,11 +108,13 @@ def test_coerce_scalar_handles_vulnbox_keys():
     assert app_config.coerce_scalar("vulnbox_ssh_port", "2222") == 2222
     assert app_config.coerce_scalar("vulnbox_user", "root") == "root"
     assert app_config.coerce_scalar("vulnbox_services_path", "/srv") == "/srv"
-    assert app_config.coerce_scalar("vulnbox_ip", "") == ""
+    assert app_config.coerce_scalar("vulnbox_service_ports", "9000-9999") == "9000-9999"
     with pytest.raises(ValueError):
         app_config.coerce_scalar("vulnbox_ssh_port", "99999")
     with pytest.raises(ValueError):
         app_config.coerce_scalar("vulnbox_services_path", "relative/path")
+    with pytest.raises(ValueError):
+        app_config.coerce_scalar("vulnbox_service_ports", "not-a-port")
 
 
 # --- paths are env-driven --------------------------------------------------
