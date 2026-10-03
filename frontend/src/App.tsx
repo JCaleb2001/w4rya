@@ -25,6 +25,7 @@ import { KillChain } from "./pages/KillChain";
 import { Exploits } from "./pages/Exploits";
 import { Audit } from "./pages/Audit";
 import { Warroom } from "./pages/Warroom";
+import { VulnboxPage } from "./features/vulnbox";
 import { useGetMeQuery, useGetSetupStatusQuery } from "./api";
 import { Toasts } from "./components/Toasts";
 import { FlagLeakWatcher } from "./components/FlagLeakWatcher";
@@ -149,6 +150,14 @@ function App() {
             element={
               <Suspense>
                 <Exploits />
+              </Suspense>
+            }
+          />
+          <Route
+            path="vulnbox"
+            element={
+              <Suspense>
+                <VulnboxPage />
               </Suspense>
             }
           />
