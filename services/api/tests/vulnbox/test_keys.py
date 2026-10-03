@@ -74,3 +74,16 @@ def test_forget_host_key(vbox_dir):
     kh.write_text("192.0.2.10 ssh-ed25519 AAAA...\n")
     assert keys.forget_host_key() is True
     assert not kh.exists()
+
+
+@pytest.mark.skipif(os.geteuid() != 0, reason="chown to another uid needs root")
+def test_key_files_belong_to_the_data_dir_owner(tmp_path, monkeypatch):
+    """The host user must be able to read the key (scripts/backup.sh copies it)."""
+    from vulnbox import config as vconfig
+    data = tmp_path / "vulnbox-data"
+    data.mkdir()
+    os.chown(data, 4242, 4242)
+    monkeypatch.setenv("W4RYA_VULNBOX_DIR", str(data))
+    keys.generate()
+    for p in (vconfig.keys_dir(), vconfig.private_key_path(), vconfig.public_key_path()):
+        assert p.stat().st_uid == 4242, p

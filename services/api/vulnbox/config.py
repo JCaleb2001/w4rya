@@ -96,11 +96,13 @@ RUN_TIMEOUT = 120
 # spaces, shell metacharacters) is rejected rather than quoted-and-hoped.
 SERVICE_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 
-# SSH username charset (POSIX-portable account names).
-USERNAME_RE = re.compile(r"^[A-Za-z0-9._-]+$")
+# SSH username charset (POSIX-portable account names). Never a leading '-'
+# or '.': ssh would read `-x@host` as an option.
+USERNAME_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9._-]*$")
 
-# DNS hostname charset; ip literals (v4 and v6) are checked separately.
-_HOSTNAME_RE = re.compile(r"^[A-Za-z0-9.-]+$")
+# DNS hostname charset; ip literals (v4 and v6) are checked separately. Same
+# leading-character rule as usernames.
+_HOSTNAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.-]*$")
 
 
 def is_valid_service_name(name: str) -> bool:
@@ -190,12 +192,39 @@ def validate_service_ports(raw) -> str:
 
 
 # --- filesystem (lazy; never at import) ------------------------------------
+#
+# The api runs as root inside the container while ./vulnbox-data is a host
+# bind mount owned by the host user. Everything created under it is handed to
+# the data directory's owner (same rule as user_store._write_atomic) — or the
+# key, the backups and job state turn up root-owned on the host, where the
+# user can't read them and scripts/backup.sh can't copy them.
+
+def own(path) -> None:
+    """Give `path` to the data directory's owner. Best effort: a failure here
+    (non-root api, odd filesystem) must never fail the operation itself."""
+    try:
+        st = data_dir().stat()
+        os.chown(path, st.st_uid, st.st_gid, follow_symlinks=False)
+    except OSError:
+        pass
+
 
 def ensure_dir(path: Path) -> None:
+    """mkdir -p, handing every directory it creates to the data dir's owner."""
+    path = Path(path)
+    created = []
+    p = path
+    while not p.exists() and p != p.parent:
+        created.append(p)
+        p = p.parent
     path.mkdir(parents=True, exist_ok=True)
+    for d in reversed(created):
+        own(d)
 
 
 def init_paths() -> None:
-    """Create the data directory tree. Called from create_app(), not import."""
-    ensure_dir(keys_dir())
-    ensure_dir(backups_dir())
+    """Create the data directory tree (called from create_app(), not import).
+    Also re-owns keys/ and backups/ in case an earlier run left them root-owned."""
+    for d in (keys_dir(), backups_dir()):
+        ensure_dir(d)
+        own(d)

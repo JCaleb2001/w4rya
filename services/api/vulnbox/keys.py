@@ -5,9 +5,9 @@ only ever served as a file download — never returned in a JSON body or
 rendered on screen, since A/D games may record or share players' screens.
 The public key is safe to show and copy.
 
-Files are chowned to the data directory's owner, same reason as
-`user_store._write_atomic`: the api runs as root inside the container over a
-host bind mount, so without it they turn up root-owned on the host.
+Files are handed to the data directory's owner (`config.own`): the api runs
+as root inside the container over a host bind mount, and the host user must
+be able to read the key (scripts/backup.sh copies it).
 """
 
 from __future__ import annotations
@@ -21,14 +21,6 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from . import config
-
-
-def _chown_to_parent(path) -> None:
-    try:
-        st = os.stat(path.parent)
-        os.chown(path, st.st_uid, st.st_gid)
-    except OSError:
-        pass
 
 
 def fingerprint(public_key: str) -> Optional[str]:
@@ -98,8 +90,8 @@ def generate(rotate: bool = False) -> dict:
         os.chmod(pub, 0o644)
     except OSError:
         pass
-    _chown_to_parent(priv)
-    _chown_to_parent(pub)
+    config.own(priv)
+    config.own(pub)
     return status()
 
 

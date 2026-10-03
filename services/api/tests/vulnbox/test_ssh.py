@@ -79,3 +79,22 @@ def test_run_remote_script_quotes_hostile_args(vbox_dir, monkeypatch):
 def test_tcp_reachable_false_for_dead_port(vbox_dir):
     # 127.0.0.1:1 is not listening; must return False fast, not raise
     assert ssh.tcp_reachable("127.0.0.1", 1, timeout=0.3) is False
+
+
+def test_ssh_argv_ends_options_before_the_destination(vbox_dir):
+    argv = ssh.ssh_argv("192.0.2.10", 22, "root")
+    assert argv[-2:] == ["--", "root@192.0.2.10"]
+
+
+def test_run_survives_output_that_is_not_utf8():
+    # a filename on the box can hold any bytes; one must not kill the job
+    proc = ssh.run(["bash", "-c", r"printf 'BIG\tsvc\tcaf\xe9.bin\t1\n'"])
+    assert proc.returncode == 0
+    assert "�" in proc.stdout
+
+
+def test_timeout_message_does_not_always_blame_the_vpn():
+    proc = subprocess.CompletedProcess([], 124, "", "timed out after 900s")
+    msg = ssh.describe_failure(proc)
+    assert "timed out after 900s" in msg
+    assert "retry" in msg

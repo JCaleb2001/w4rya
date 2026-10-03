@@ -1,5 +1,7 @@
 """Pure config/validator paths for the vulnbox module."""
 
+import os
+
 import pytest
 
 import app_config
@@ -124,3 +126,42 @@ def test_paths_follow_env(vbox_dir):
     assert vconfig.keys_dir().is_dir()
     assert vconfig.backups_dir().is_dir()
     assert vconfig.private_key_path().parent == vconfig.keys_dir()
+
+
+# --- ownership: everything under the data dir belongs to its owner ----------
+
+needs_root = pytest.mark.skipif(os.geteuid() != 0, reason="chown to another uid needs root")
+OTHER_UID = 4242  # stands in for the host user who owns the bind mount
+
+
+@needs_root
+def test_ensure_dir_gives_created_dirs_to_the_data_dir_owner(tmp_path, monkeypatch):
+    data = tmp_path / "vulnbox-data"
+    data.mkdir()
+    os.chown(data, OTHER_UID, OTHER_UID)
+    monkeypatch.setenv("W4RYA_VULNBOX_DIR", str(data))
+    vconfig.init_paths()
+    for d in (vconfig.keys_dir(), vconfig.backups_dir()):
+        assert d.stat().st_uid == OTHER_UID, d
+
+
+@needs_root
+def test_init_paths_repairs_root_owned_subdirs(tmp_path, monkeypatch):
+    data = tmp_path / "vulnbox-data"
+    (data / "keys").mkdir(parents=True)  # left root-owned by an older run
+    os.chown(data, OTHER_UID, OTHER_UID)
+    monkeypatch.setenv("W4RYA_VULNBOX_DIR", str(data))
+    vconfig.init_paths()
+    assert vconfig.keys_dir().stat().st_uid == OTHER_UID
+
+
+@pytest.mark.parametrize("raw", ["-Elog", "-oProxyCommand", ".hidden"])
+def test_usernames_cannot_start_like_an_option(raw):
+    with pytest.raises(ValueError):
+        vconfig.validate_username(raw)
+
+
+@pytest.mark.parametrize("raw", ["-oProxyCommand", ".host", "-x.example"])
+def test_hostnames_cannot_start_like_an_option(raw):
+    with pytest.raises(ValueError):
+        vconfig.resolve_host(raw)

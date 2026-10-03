@@ -64,8 +64,7 @@ def _read(path=None) -> dict:
 
 
 def _write(state: dict, path=None) -> None:
-    """Atomic replace + hand the file to the data dir's owner (the api runs as
-    root over a host bind mount — same rule as user_store._write_atomic)."""
+    """Atomic replace, handing the file to the data dir's owner (config.own)."""
     path = path or config.job_path()
     config.ensure_dir(path.parent)
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".job.", suffix=".json")
@@ -73,11 +72,7 @@ def _write(state: dict, path=None) -> None:
         with os.fdopen(fd, "w") as f:
             json.dump(state, f)
         os.chmod(tmp, 0o644)
-        try:
-            st = path.parent.stat()
-            os.chown(tmp, st.st_uid, st.st_gid)
-        except OSError:
-            pass
+        config.own(tmp)
         os.replace(tmp, path)
     except Exception:
         try:
@@ -93,11 +88,7 @@ def _open_lock() -> int:
     existed = path.exists()
     fd = os.open(path, os.O_CREAT | os.O_RDWR, 0o600)
     if not existed:
-        try:
-            st = path.parent.stat()
-            os.chown(path, st.st_uid, st.st_gid)
-        except OSError:
-            pass
+        config.own(path)
     return fd
 
 

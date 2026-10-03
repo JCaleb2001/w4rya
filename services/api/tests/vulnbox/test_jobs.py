@@ -3,6 +3,7 @@ a job whose worker died reported as interrupted (decided by the lock, not by
 guessing from timestamps)."""
 
 import json
+import os
 import threading
 import time
 
@@ -83,3 +84,15 @@ def test_unknown_kind_rejected(vbox_dir):
 
 def test_empty_state_when_nothing_ran(vbox_dir):
     assert jobs.snapshot() == {"current": None, "last": {}}
+
+
+@pytest.mark.skipif(os.geteuid() != 0, reason="chown to another uid needs root")
+def test_job_files_belong_to_the_data_dir_owner(tmp_path, monkeypatch):
+    data = tmp_path / "vulnbox-data"
+    data.mkdir()
+    os.chown(data, 4242, 4242)
+    monkeypatch.setenv("W4RYA_VULNBOX_DIR", str(data))
+    jobs.start("recon", lambda: {}, actor="a")
+    wait_idle()
+    for p in (vconfig.job_path(), vconfig.job_lock_path()):
+        assert p.stat().st_uid == 4242, p

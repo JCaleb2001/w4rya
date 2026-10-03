@@ -18,7 +18,6 @@ accept any host key, which lets anyone on the path impersonate the vulnbox):
 
 from __future__ import annotations
 
-import os
 import shlex
 import socket
 import subprocess
@@ -46,12 +45,14 @@ def ssh_options() -> list[str]:
 
 
 def ssh_argv(host: str, port: int, user: str) -> list[str]:
-    """`ssh` up to and including the destination; append the remote command."""
+    """`ssh` up to and including the destination; append the remote command.
+    `--` ends the options, so the destination can never be read as one."""
     return [
         "ssh",
         "-p", str(port),
         "-i", str(config.private_key_path()),
         *ssh_options(),
+        "--",
         f"{user}@{host}",
     ]
 
@@ -100,8 +101,10 @@ def run(argv: list[str], *, input: Optional[str] = None, timeout: int = config.R
     or a missing binary come back as a CompletedProcess with a readable stderr,
     so every caller handles failure through one path (`describe_failure`)."""
     try:
+        # errors="replace": the box's filenames can hold any bytes (other
+        # teams pick them); one bad name must not fail the whole job.
         return subprocess.run(
-            argv, input=input, capture_output=True, text=True,
+            argv, input=input, capture_output=True, text=True, errors="replace",
             timeout=timeout, env=env, cwd=cwd,
         )
     except subprocess.TimeoutExpired:
@@ -115,15 +118,10 @@ def run(argv: list[str], *, input: Optional[str] = None, timeout: int = config.R
 
 def fix_known_hosts_ownership() -> None:
     """ssh (running as root in the container) creates/updates known_hosts on
-    the host bind mount; hand it back to the directory's owner, same reason as
-    user_store._write_atomic."""
+    the host bind mount; hand it to the data directory's owner."""
     kh = config.known_hosts_path()
-    try:
-        st = kh.parent.stat()
-        if kh.exists():
-            os.chown(kh, st.st_uid, st.st_gid)
-    except OSError:
-        pass
+    if kh.exists():
+        config.own(kh)
 
 
 def describe_failure(proc: subprocess.CompletedProcess) -> str:
@@ -141,7 +139,8 @@ def describe_failure(proc: subprocess.CompletedProcess) -> str:
     if "connection refused" in low:
         return "the vulnbox refused the ssh connection — is sshd running on that port?"
     if proc.returncode == 124 or "timed out after" in low:
-        return "the vulnbox did not answer in time — is the game VPN up?"
+        # A long clone over a slow link times out too, so don't blame the VPN.
+        return f"{err} — check the game VPN, or retry if the link is just slow"
     if proc.returncode == 127:
         return err
     tail = err.splitlines()[-1] if err else f"exit code {proc.returncode}"
