@@ -76,6 +76,13 @@ DEFAULTS: dict[str, Any] = {
     # the checker (plants and reads its own flag every tick) and our own
     # tooling talking to the vulnbox. Comma-separated ips or CIDRs.
     "noise_ips": os.environ.get("NOISE_IPS", ""),
+    # Vulnbox ops module. The host is derived from team_id as 10.60.<id>.2
+    # unless vulnbox_ip overrides it (demo slots / self-hosting). See
+    # services/api/vulnbox/.
+    "vulnbox_ip": os.environ.get("VULNBOX_IP", ""),
+    "vulnbox_user": os.environ.get("VULNBOX_USER", "root"),
+    "vulnbox_ssh_port": int(os.environ.get("VULNBOX_SSH_PORT") or 22),
+    "vulnbox_services_path": os.environ.get("VULNBOX_SERVICES_PATH", "/root/services"),
 }
 
 
@@ -230,6 +237,10 @@ SCALAR_KEYS = {
     "bpf",
     "rules_autoreload",
     "noise_ips",
+    "vulnbox_ip",
+    "vulnbox_user",
+    "vulnbox_ssh_port",
+    "vulnbox_services_path",
 }
 
 BOOL_KEYS = {"rules_autoreload"}
@@ -272,6 +283,18 @@ def coerce_scalar(key: str, raw: Any) -> Any:
         except ValueError as e:
             raise ValueError(f"invalid ip or CIDR: {e}")
         return ", ".join(str(n) for n in nets)
+    if key.startswith("vulnbox_"):
+        # Validators live in the vulnbox package (imported lazily to keep this
+        # low-level module free of any feature-package import at load time).
+        from vulnbox import config as _vconfig
+        if key == "vulnbox_ssh_port":
+            return _vconfig.validate_port(raw)
+        if key == "vulnbox_user":
+            return _vconfig.validate_username(raw)
+        if key == "vulnbox_services_path":
+            return _vconfig.validate_services_path(raw)
+        if key == "vulnbox_ip":
+            return _vconfig.validate_host_override(raw)
     if key == "flag_regex":
         s = str(raw)
         # D1: validate at write-time so a typo doesn't break /query for the
