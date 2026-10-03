@@ -16,7 +16,19 @@ from __future__ import annotations
 import ipaddress
 import os
 import re
+from dataclasses import dataclass
 from pathlib import Path
+
+
+@dataclass(frozen=True)
+class Target:
+    """Where to connect, resolved from /config once per job. Operations take
+    this instead of reading app_config themselves, which keeps them pure and
+    trivially testable."""
+    host: str
+    port: int
+    user: str
+    services_path: str
 
 
 # --- where things live -----------------------------------------------------
@@ -68,9 +80,24 @@ MAX_FILE_BYTES = 25 * 1024 * 1024
 CONNECT_TIMEOUT = 8
 RUN_TIMEOUT = 120
 
-# A background job whose worker died leaves a stale "running" record; past this
-# age `jobs.current()` reports it as interrupted instead of wedging the UI.
-JOB_STALE_SECONDS = 15 * 60
+# ECSC 2026: the game firewall only lets other teams reach the vulnbox on
+# 9000-9999, so a published port in this range is a game service; anything
+# else is our own tooling.
+GAME_PORT_MIN = 9000
+GAME_PORT_MAX = 9999
+
+# The ECSC 2026 A/D values (handbook §6.4 + the A/D wiki), applied by the
+# "ECSC 2026 defaults" button. flag_regex is the official pattern *unanchored*:
+# w4rya searches for flags inside traffic, so ^...$ would never match.
+# flag_lifetime counts ticks including the current one (see Corrie's
+# `tick - (flagLifetime - 1)`): a flag is valid in its round + 4 more = 5.
+# start_date is 2026-10-15 11:00 CEST (= 09:00 UTC).
+ECSC2026_DEFAULTS = {
+    "flag_regex": r"ECSC\{[A-Za-z0-9_-]{32}\}",
+    "tick_length": 60000,
+    "flag_lifetime": 5,
+    "start_date": "2026-10-15T09:00:00Z",
+}
 
 
 # --- validation ------------------------------------------------------------
