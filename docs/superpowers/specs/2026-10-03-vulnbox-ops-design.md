@@ -1,60 +1,67 @@
-# Vulnbox ops module — design spec
+# Vulnbox ops module — design
 
-- **Date:** 2026-10-03
-- **Branch:** `claude/cool-johnson-t1lmoy`
-- **Status:** implemented (as-built; see §10 for what changed during implementation)
-- **Author:** nightwing (paired with Claude)
+- **Status:** implemented (this document describes the module as built)
+- **Code:** `services/api/vulnbox/` (backend) · `frontend/src/features/vulnbox/` (frontend)
 
 ## 1. Goal
 
-Give the team one place in w4rya — a `/vulnbox` page — to get **our own
-vulnbox** ready and protected for an Attack/Defense game: generate the SSH
-key to paste into the A/D platform, verify the box is reachable, discover the
-running services (and import them into `/config`), and take a git **baseline +
-snapshots** of the service code. One button per action, nothing scheduled.
+Give the team one place in w4rya — the `/vulnbox` page — to get **our own
+vulnbox** ready and protected for an Attack/Defense game:
 
-This is preparation + defense tooling for *our* box. It never touches another
-team's host, and it runs no AI at runtime (CLAUDE.md hard constraint; ECSC
-handbook §6.11 bans LLMs during the game, but explicitly allows using them to
-*prepare tooling beforehand* — which is what building this is).
+- generate the SSH key to submit to the A/D platform;
+- verify the box is reachable;
+- discover the running services and import them into `/config`;
+- take a git **baseline**, then snapshots, of the service code.
 
-## 2. Platform context (ECSC 2026, from the handbook + A/D wiki)
+There is one button per action and nothing is scheduled.
 
-Facts the module depends on, with their consequences:
+This is preparation and defense tooling for *our* box. It never touches another
+team's host, and it runs no AI at runtime (CLAUDE.md hard constraint).
 
-| Fact | Consequence for the module |
+The module is **game-agnostic**. Whatever differs between games is a `/config`
+setting, and a named bundle of settings for one game is a **preset**: data, not
+code (§4.5).
+
+## 2. Assumptions about the game
+
+These hold for typical A/D games. Anything a specific game does differently is a
+setting.
+
+| Assumption | How the module handles it |
 |---|---|
-| Vulnbox is at `10.60.<TEAM>.2` (team subnet `10.60.<TEAM>.0/24`). | Derive the host from `team_id`; allow a manual override for demo slots. |
-| VM access = **submit your SSH public key to the platform**; organizers provision `/root/.ssh/authorized_keys`. | Generate a keypair, show the **public** half to paste in. Never touch `authorized_keys`. |
-| Access is over WireGuard, reachable only when the host VPN is up. | Preflight must distinguish "VPN/host down" from "SSH key rejected". |
-| Services live on ports **9000–9999**. | Recon highlights that range; anything else is our own tooling. |
-| Round = 60s, flags valid 4 rounds, flag regex `^ECSC\{[A-Za-z0-9_-]{32}\}$`, game starts 2026-10-15 11:00 CEST. | "ECSC 2026 defaults" button seeds these into `/config`. |
-| Screen recording is mandatory during the game (§6.12). | The **private** key is only ever downloaded as a file, never rendered on screen. |
-| Keys must be submitted before 10:30 (organizers boot the boxes then). | Key card is first; the page is ordered by the game-day timeline. |
-| §6.7.1 bans excessive load on the infrastructure. | One job at a time, by button only, service-by-service, with size caps. |
+| Each team gets a vulnbox. We know its address. | `vm_ip` in `/config` is the ssh target. |
+| Access is by ssh with a key the A/D platform installs. | Generate a keypair and show the **public** half to submit. Never touch `authorized_keys`. |
+| The box is reachable only over the game VPN. | Preflight distinguishes "VPN/host down" from "ssh refused our key". |
+| Services run as docker compose projects, one directory per service. | Recon ties containers to directories through compose's `working_dir` label. |
+| Only some published ports are game services; the rest are our tooling. | `vulnbox_service_ports` ranges (empty = every published port). |
+| Round length, flag format, flag validity and start time differ per game. | Presets (§4.5). |
+| Players' screens may be recorded or shared. | The **private** key is only ever downloaded as a file, never rendered. |
+| Game rules commonly forbid excessive load on the infrastructure. | One job at a time, by button only, service by service, with size caps. |
+| There is a window before other teams can reach the box. | The first backup is the baseline: the original code. |
 
 ## 3. Architecture
 
-Follows the existing w4rya patterns exactly; adds no new runtime dependency, no
-DB schema change, no new container.
+It follows the existing w4rya patterns. It adds no new runtime dependency, no DB
+schema change and no new container.
 
 - **Backend:** a self-contained package `services/api/vulnbox/` exposing a Flask
-  **Blueprint** (`bp`). `webservice.py` registers it with one line. This is the
-  first Blueprint in the API; it is documented in CLAUDE.md as the convention
-  for new feature modules. The app-wide `before_request` auth guard already
-  covers Blueprint routes, so auth/roles work unchanged.
-- **Frontend:** a feature folder `frontend/src/features/vulnbox/`. Its endpoints
-  are added to the single shared `w4ryaApi` slice via `injectEndpoints` (RTK
-  Query code-splitting), not a second API. The feature declares its own
-  `"Vulnbox"` tag via `enhanceEndpoints({addTagTypes})`, so the base `api.ts`
-  needs no new endpoints or tags.
-- **Dependency direction (one way):** `routes → jobs → {recon, backup, preflight} → ssh → keys → config`.
-  `config.py` holds paths, timeouts and validators used by all of them.
+  **Blueprint** (`bp`). `webservice.py` registers it with one line. This is the first
+  Blueprint in the API, and it is documented in CLAUDE.md as the convention for new
+  feature modules. The app-wide `before_request` auth guard already covers Blueprint
+  routes, so auth and roles work unchanged.
+- **Frontend:** a feature folder `frontend/src/features/vulnbox/`. Its endpoints are
+  added to the single shared `w4ryaApi` slice via `injectEndpoints` (RTK Query
+  code-splitting), not a second API. The feature declares its own `"Vulnbox"` tag via
+  `enhanceEndpoints({addTagTypes})`, so the base `api.ts` needs no new endpoints or
+  tags.
+- **Dependency direction (one way):**
+  `routes → jobs → {preflight, recon, backup} → ssh → keys → config`. `config.py` holds
+  the paths, timeouts and validators used by all of them; `presets.py` holds game data.
 
 ### 3.1 Data on disk
 
 A single git-ignored host directory, bind-mounted into the api container at
-`/app/vulnbox-data` (same bind-mount style as `./auth`, `./suricata-rules`):
+`/app/vulnbox-data` (the same bind-mount style as `./auth` and `./suricata-rules`):
 
 ```
 vulnbox-data/
@@ -67,110 +74,188 @@ vulnbox-data/
   job.lock            # flock — one job at a time
 ```
 
-Every file we create mirrors `user_store._write_atomic`: written atomically,
-`chmod` to the right mode, then `chown` to the bind-mount directory's owner so
-the root-running container never leaves root-owned files on the host.
+Every file we create follows `user_store._write_atomic`: written atomically,
+`chmod`ed to the right mode, then `chown`ed to the bind-mount directory's owner. That
+way the root-running container never leaves root-owned files on the host.
 
 ### 3.2 On the vulnbox
 
-Backups never create a `.git` inside a service directory (that would expose
-source via `/.git/` scraping). Instead a **bare** repo per service lives at
-`~/.w4rya-backups/<service>.git` (`/root/...` for root), committed with
-`--git-dir`/`--work-tree`.
-Recon and preflight run a single piped shell script over SSH
+Backups never create a `.git` inside a service directory, because a statically
+served `.git` leaks source. Instead, a **bare** repo per service lives at
+`~/.w4rya-backups/<service>.git` and is committed with `--git-dir`/`--work-tree`.
+
+Preflight, recon and backup each pipe one shell script over ssh
 (`ssh … bash -s < remote/<name>.sh`), the same technique as
-`scripts/vulnbox/remote_capture.sh`. Scripts emit tab-separated text so the
+`scripts/vulnbox/remote_capture.sh`. The scripts emit tab-separated text, so the
 vulnbox needs no Python.
 
-### 3.3 Config keys (new rows in the existing `app_config` table — not a schema change)
+### 3.3 Settings (`app_config` rows — not a schema change)
 
 | key | default | meaning |
 |---|---|---|
-| `vulnbox_ip` | `""` (empty ⇒ derive `10.60.<team_id>.2`) | manual host override |
+| `vm_ip` (existing) | — | our vulnbox's address: the ssh target |
 | `vulnbox_user` | `root` | SSH user |
 | `vulnbox_ssh_port` | `22` | SSH port |
-| `vulnbox_services_path` | `/root/services` | where service dirs live |
+| `vulnbox_services_path` | `/root/services` | where the service directories live |
+| `vulnbox_service_ports` | `""` | game-service port ranges, e.g. `9000-9999,31337`; empty = all |
 
-Added to `SCALAR_KEYS` with validators in `app_config.coerce_scalar`
-(IP/host, username charset, port range, absolute path). The derivation helper
-`vulnbox.config.resolve_host()` reads `vulnbox_ip` else computes from `team_id`;
-`team_id` 0 (the unconfigured default) is rejected rather than derived.
+The new keys are added to `SCALAR_KEYS`, with write-time validators in
+`app_config.coerce_scalar`. If `vm_ip` is unset or invalid, the routes answer 400 with
+the fix.
 
 ## 4. Behavior per card
 
 ### 4.1 Key (admin)
-- `GET /vulnbox` (any role) → overview `{target, key, jobs, defaults}`; `key` is `{exists, public_key, fingerprint, created_at}` — never the private key.
-- `POST /vulnbox/key` → generate ed25519 via `ssh-keygen`; refuses if one exists unless `{rotate:true}` (rotating invalidates the old one). Audited `vulnbox.key_generate` / `vulnbox.key_rotate`.
-- `GET /vulnbox/key/private` → `text/plain` attachment download. Audited `vulnbox.key_download`.
-- `DELETE /vulnbox/known-host` → forget the pinned host key (box re-provisioned). Audited.
+
+- `GET /vulnbox` (any role) returns the overview `{target, key, jobs, presets}`. Its
+  `key` field is `{exists, public_key, fingerprint, created_at}`, never the private
+  key.
+- `POST /vulnbox/key` generates an ed25519 key with `ssh-keygen`. It refuses if a key
+  already exists, unless the body is `{rotate:true}`; rotating invalidates the old
+  key. Audited.
+- `GET /vulnbox/key/private` downloads the key as a `no-store` attachment. Audited.
+- `DELETE /vulnbox/known-host` forgets the pinned host key, for when the box is
+  re-provisioned. Audited.
 
 ### 4.2 Preflight (operator) — read-only, creates nothing
-- `POST /vulnbox/preflight` runs a background job returning a checklist, each item `{ok, detail}`:
-  key present · host reachable (TCP connect to ssh port) · SSH auth works · `vulnbox_services_path` exists · `git` present · `docker` present.
-- Distinguishes host-unreachable (VPN down) from auth-failure from path-missing, each with a one-line hint.
+
+`POST /vulnbox/preflight` runs a background job that returns a checklist. Each item
+is `{name, status: ok|fail|skipped, detail}`:
+
+1. key present
+2. host reachable (TCP connect to the ssh port)
+3. ssh login works
+4. `vulnbox_services_path` exists
+5. `git` is present
+6. `docker` is present
+
+The run stops at the first broken link, and every later check is reported as
+skipped.
 
 ### 4.3 Recon (operator; import is admin)
-- `POST /vulnbox/recon` (background): lists dirs under `vulnbox_services_path`, maps containers→published ports via `docker ps`, flags the 9000–9999 range. Result: `[{service, dir, ports[], image}]`.
-- `POST /vulnbox/import-services` (admin): maps recon rows into `/config → services` (name, derived vulnbox ip, port), merged with existing by (ip,port). Audited.
+
+- `POST /vulnbox/recon` (background) lists the directories under
+  `vulnbox_services_path` and maps containers to their published ports. Each result
+  row is `{name, ports, service_ports, containers}`.
+- `POST /vulnbox/import-services` (admin) upserts the service ports into
+  `/config → services` by (ip, port), and never deletes an entry. Audited.
 
 ### 4.4 Backup (operator)
-- `POST /vulnbox/backup` (background): for each service, ensure the bare repo exists (`git init --bare` on first run = baseline), commit the current tree, then clone/pull into `vulnbox-data/backups/<service>/`. Files over a size cap are skipped and reported. Result per service: `{service, status: created|updated|skipped|error, commit, files, skipped[], detail}`.
-- `GET /vulnbox/backup/last` → the last backup job result.
 
-### 4.5 Defaults button (admin)
-- `POST /vulnbox/seed-defaults` → writes the ECSC 2026 values into `app_config` (tick 60000, flag_lifetime **5** — w4rya counts the current tick, and a flag is valid in its round + 4 — the official flag regex *unanchored* so it matches inside traffic, start_date 2026-10-15T09:00:00Z). Returns the applied values plus the matching `.env` lines (the assembler reads those at boot). Audited `vulnbox.seed_defaults`. (Reuses `app_config.coerce_scalar` + `set`.)
+`POST /vulnbox/backup` (background) handles each service in turn:
 
-## 5. Jobs (background, shared across 3 gunicorn workers)
+1. Ensure the bare repo exists. Creating it on the first run makes that run the
+   baseline.
+2. Commit the current tree.
+3. Clone or fast-forward pull into `vulnbox-data/backups/<service>/`.
 
-`jobs.py`: a job is a `{id, kind, state: running|done|error, started_at, finished_at, result, error}` record written to `job.json` atomically, guarded by a `job.lock` flock so only one runs at a time. A second request while one runs returns `409 {error, running: <kind>}`. The worker runs the job in a `threading.Thread`; the route returns the job id immediately and the frontend polls `GET /vulnbox/job`. If the holding worker dies, the lock releases, and a `running` record whose lock nobody holds reads as `error: interrupted` — decided exactly by probing the lock, not by a timestamp timeout. The last result of each kind is kept, so one card's job doesn't wipe another's result.
+Files over the size cap are skipped and reported. Each result row is
+`{name, status: created|updated|unchanged|error, commit, files, skipped, local}`.
+
+### 4.5 Game presets (admin)
+
+`presets.py` holds `Preset(id, name, values)` entries: the `/config` values one game
+needs (round length, flag format, flag lifetime, start time, service ports).
+
+`POST /vulnbox/presets/<id>` writes a preset's values through the same
+`coerce_scalar` validation as `PUT /config`. It returns the applied values plus the
+matching `.env` lines (`ASSEMBLER_ENV`), because the assembler reads some of these
+settings from `.env` at boot. Audited.
+
+Supporting another game means adding one entry. A test validates every entry, so a
+preset can never hold a value `/config` would reject.
+
+## 5. Jobs (background, shared across gunicorn workers)
+
+- **Record:** `jobs.py` writes `{id, kind, state: running|done|error, started_by,
+  started_at, finished_at, result, error}` to `job.json` atomically.
+- **One at a time:** a `job.lock` flock, held for the whole job, enforces it. A second
+  request gets `409 {error, running: <kind>}`.
+- **Background run:** the job runs in a daemon thread. The route returns at once and
+  the page polls `GET /vulnbox`.
+- **Dead workers:** if the holding worker dies, the lock is released, and a `running`
+  record whose lock nobody holds reads as interrupted. This is decided by probing the
+  lock, not by timestamps.
+- **Per-kind results:** the last result of each kind is kept.
 
 ## 6. Security decisions
 
-1. Private key: 0600, download-only, never in a JSON body or on screen (§6.12).
-2. Host key pinned on first connect (TOFU) in our own `known_hosts`; SSH runs `BatchMode=yes`, `IdentitiesOnly=yes`, `StrictHostKeyChecking=accept-new`, `ConnectTimeout`. Not `-o StrictHostKeyChecking=no` / `/dev/null` (the pasted script's approach — it accepts any MITM).
-3. Service names validated `^[A-Za-z0-9._-]+$` before use in any path/command; all SSH/git args passed as argv lists (`subprocess` without `shell=True`) or `shlex.quote`d inside remote scripts. No string-interpolated shell.
-4. Never writes to `authorized_keys`; the organizer key stays.
-5. Every mutating route audited via `audit.log`.
-6. All new routes behind the existing session + role guards.
+1. The private key is 0600, download-only, and never in a JSON body or on screen.
+2. The host key is pinned on first connect (TOFU) in our own `known_hosts`. ssh runs
+   with `BatchMode`, `IdentitiesOnly`, `StrictHostKeyChecking=accept-new` and
+   `ConnectTimeout` — never `StrictHostKeyChecking=no`.
+3. Service names are validated against `^[A-Za-z0-9._-]+$` before use in any path or
+   command. SSH/git args are argv lists (no `shell=True`), and remote args are
+   `shlex.quote`d.
+4. `authorized_keys` is never written; keys the organizers installed stay.
+5. Every mutating route is audited, and every route sits behind the existing session
+   and role guards.
+6. No key means no socket: without a key, no job opens a connection.
 
-## 7. Out of scope (roadmap — documented in the module README, not built)
+## 7. Out of scope (roadmap)
 
-Baseline diff; our-service SLA monitor from the scoreboard; quiet-window
-countdown; game-API ingest (`/api/attack.json`, teams list); official flag
-submitter; sharing this key with the capture scripts; restore-from-snapshot
-(writes to the vulnbox — needs its own design).
+Not built; tracked in the module README:
+
+- a diff against the baseline;
+- an SLA monitor for our own services;
+- a countdown to a checker-free window, for games that have one;
+- ingesting the game API (attack info, team list);
+- flag submission;
+- sharing this key with the capture scripts;
+- restoring a service from a snapshot (it writes to the vulnbox, so it needs its own
+  design).
 
 ## 8. Testing (offline, same harness as the existing suite)
 
-Unit: key gen/read/fingerprint (ssh-keygen mocked), host derivation, config
-validators, recon output parser, service-name rejection, SSH argv construction,
-backup result shaping, job lock + stale-interrupted detection. Routes: role
-matrix rows (added to `test_routes_roles.py`) + audit calls, 409-on-concurrent,
-private-key-never-in-JSON. No DB, no network, no real SSH — subprocess and the
-pool are faked, exactly as `conftest.py` sets up.
+- **Units:**
+  - config validators and port ranges;
+  - presets (every entry validated);
+  - keys, including the fingerprint checked against the real `ssh-keygen`;
+  - ssh argv and quoting;
+  - preflight, recon and backup, running the real remote scripts with bash and a
+    real local git clone (only the ssh hop is faked);
+  - jobs (lock, interrupted).
+- **Routes:**
+  - role-matrix rows;
+  - audit calls;
+  - 409 on concurrent jobs;
+  - the private key never appears in JSON;
+  - a test-only preset.
+- **Fixtures:** test data uses RFC 5737 documentation addresses.
 
-## 9. Global constraints (verbatim, for the plan)
+## 9. Constraints
 
 - No AI/LLM at runtime. Deterministic SSH/git/sockets only.
 - No DB schema change; new settings are `app_config` rows.
-- No new runtime dependency; `git`/`openssh-client` already in `python:3.10`.
+- No new runtime dependency; `git`/`openssh-client` ship in `python:3.10`.
 - Do not touch `authorized_keys`; do not render the private key.
-- One job at a time, button-triggered, service-by-service (no excessive load).
-- Host from `team_id` (`10.60.<id>.2`) unless `vulnbox_ip` overrides.
+- One job at a time, button-triggered, service by service.
+- Game-agnostic code: anything specific to one game is a setting or a preset entry.
 - Mount `./vulnbox-data` in BOTH compose files (kept in sync, per CLAUDE.md).
 - Backend = Blueprint package; frontend = feature folder + `injectEndpoints`.
-- Match existing style: `hax-*` classes, `font-mono`, `▎` headers, `useCanRole` gating + read-only banner.
+- Match the existing style: `hax-*` classes, `font-mono`, `▎` headers, `useCanRole`
+  gating plus the read-only banner.
 
-## 10. Changes made during implementation
+## 10. Decisions made during implementation
 
-Each came out of verifying against the real code or tools, not a change of scope:
+Each one came out of checking against the real code or tools:
 
-- `GET /vulnbox/key` became the `GET /vulnbox` overview, a single poll for the whole page.
-- `flag_lifetime` is 5, not 4 (w4rya counts the current tick; see `Corrie.tsx`).
-- Job liveness is decided by the `flock`, not by a stale-age timeout. That's exact, and a slow job never gets a false "interrupted".
-- `team_id` 0 is rejected instead of deriving `10.60.0.2`.
-- The fingerprint is computed in-process (the overview is polled), pinned by a test to `ssh-keygen -lf`.
-- Local git uses `-c safe.directory=*` (verified: plain git refuses a host-owned bind mount when it runs as root).
-- The base `api.ts` needs no new endpoints or tags (`enhanceEndpoints({addTagTypes})`); it only gains the four optional `vulnbox_*` fields on `GameConfig`, so the Config page's Game form can edit them (found in the final review: they were returned by `GET /config` but not editable in the UI).
-- Jobs and key generation answer 503 with a message when `./vulnbox-data` is missing or read-only, instead of a 500.
-- `scripts/backup.sh` also saves `vulnbox-data/keys/`.
+- **One overview endpoint.** `GET /vulnbox` is the only read endpoint: one poll for
+  the whole page.
+- **Liveness from the lock.** Job liveness is decided by the `flock`, not by a timeout,
+  so a slow job never reads as falsely interrupted.
+- **Fingerprint in-process.** The fingerprint is computed in Python because the
+  overview is polled. A test pins it to `ssh-keygen -lf`.
+- **`safe.directory` on the command line.** Local git uses `-c safe.directory=*`;
+  without it, git running as root refuses a host-owned bind mount.
+- **Settings editable in `/config`.** `GameConfig` gains the optional `vulnbox_*`
+  fields so the Config page can edit them.
+- **Clear 503 for an unusable data dir.** Jobs and key generation answer 503 with a
+  message when `./vulnbox-data` is missing or read-only.
+- **Backups save the key.** `scripts/backup.sh` also saves `vulnbox-data/keys/`.
+- **Game-agnostic by construction:**
+  - the ssh target is the existing `vm_ip` (no host derivation);
+  - service ports are a setting;
+  - per-game values are presets;
+  - the UI names game phases, not clock times;
+  - IPv6 hosts are bracketed in git's scp-style URL.

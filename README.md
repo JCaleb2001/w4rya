@@ -93,19 +93,21 @@ in the UI while the game runs — no rebuild.
 
 ### Vulnbox (key, preflight, recon, backup)
 
-**/vulnbox** gets our own vulnbox ready, in game-day order:
+**/vulnbox** gets our own vulnbox ready, in the order a game needs it:
 
-1. **SSH key**: generate it, then paste the public key into the A/D platform. The
+1. **SSH key**: generate it, then submit the public key to the A/D platform. The
    private key is download-only and never shown on screen.
 2. **Preflight**: a read-only check that the VPN, the ssh login and the box's tools
    are all good.
-3. **Recon**: lists the services and their ports. Import the game ones (9000–9999)
-   into `/config` with one click.
+3. **Recon**: lists the services and their ports. Import the service ports into
+   `/config` with one click.
 4. **Backup**: a git baseline of every service, then snapshots. The copies land in
    `./vulnbox-data/backups/`.
 
-Set your team id in `/config` first: the vulnbox address is `10.60.<team id>.2`
-unless you override it there. Details: `services/api/vulnbox/README.md`.
+Set our vulnbox address (`vm_ip`) in `/config` first. A **game preset** fills in a
+game's round length, flag format, start time and service ports in one step. Adding a
+preset for a new game is one entry in `services/api/vulnbox/presets.py`. Details:
+`services/api/vulnbox/README.md`.
 
 ## Manual start
 

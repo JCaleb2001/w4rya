@@ -185,23 +185,26 @@ Docker ever sees them.
 ## Vulnbox ops module (`/vulnbox`)
 
 Prepares and defends **our own** vulnbox, one button per action, nothing scheduled.
-The page follows the ECSC 2026 game-day timeline:
+The module is **game-agnostic**: anything that differs between A/D games is a
+`/config` setting, and named bundles of settings for a specific game are **presets**
+(data in `services/api/vulnbox/presets.py`). Code, docstrings and UI copy never
+name a competition, a date or a clock time. A game's specifics belong in its preset
+entry and nowhere else.
 
-1. **SSH key** (before 10:30): generate an ed25519 key and paste the public half into
-   the A/D platform (organizers boot the boxes with the submitted keys at 10:30).
-2. **Preflight** (10:30–11:00): a read-only checklist, in dependency order: key →
-   host reachable (VPN) → ssh login → services path / git / docker. It stops at the
-   first broken link, so "VPN down" is never reported as "key refused". It creates
-   nothing on the box.
-3. **Recon** (11:00): service dirs + the ports their containers publish (tied by docker
-   compose's `working_dir` label). Ports in **9000–9999** (the only range other teams
-   can reach) import into `/config → services`, upserted by (ip, port), deleting nothing.
-4. **Backup** (11:00–12:00): the first run is the **baseline**, taken while only our
-   team can reach the box. Later runs commit only what changed. Mirrored to
-   `./vulnbox-data/backups/<service>/`.
+The page orders its cards by game phase:
 
-Plus an **"ECSC 2026 defaults"** button: tick 60000 ms, `flag_lifetime` 5, flag regex
-`ECSC\{[A-Za-z0-9_-]{32}\}`, start `2026-10-15T09:00:00Z`.
+1. **SSH key** (before the game): generate an ed25519 key and submit the public half
+   to the A/D platform, which provisions the vulnbox with it.
+2. **Preflight** (once the box is up): a read-only checklist, in dependency order:
+   key → host reachable (VPN) → ssh login → services path / git / docker. It stops
+   at the first broken link, so "VPN down" is never reported as "key refused". It
+   creates nothing on the box.
+3. **Recon** (at game start): service dirs + the ports their containers publish (tied
+   by docker compose's `working_dir` label). Ports inside `vulnbox_service_ports`
+   import into `/config → services`, upserted by (ip, port), deleting nothing.
+4. **Backup** (before the network opens): the first run is the **baseline**, taken
+   while only our team can reach the box. Later runs commit only what changed.
+   Mirrored to `./vulnbox-data/backups/<service>/`.
 
 **Layout — this is the convention for new feature modules:**
 
@@ -213,17 +216,35 @@ Plus an **"ECSC 2026 defaults"** button: tick 60000 ms, `flag_lifetime` 5, flag 
   `services/api/vulnbox/README.md`.
 - Frontend: the feature folder `frontend/src/features/vulnbox/`. Endpoints go into the
   shared slice via `w4ryaApi.enhanceEndpoints({addTagTypes}).injectEndpoints(...)`, so
-  the base `api.ts` needs no new endpoints or tags (it only gained the four optional
+  the base `api.ts` needs no new endpoints or tags (it only gained the optional
   `vulnbox_*` fields on `GameConfig`, which the Config page's Game form renders). The
   folder exports only `VulnboxPage` (`index.ts`).
 - Existing modules stay flat; moving them is a separate cleanup, not drive-by.
 
-**Target:** `10.60.<team_id>.2`, derived from `/config`'s `team_id` unless the new
-`vulnbox_ip` key overrides it (demo slots / self-hosting). `team_id` **0** is the
-unconfigured default and is rejected, so we never ssh at `10.60.0.2`. The other new
-`app_config` keys are `vulnbox_user` (root), `vulnbox_ssh_port` (22) and
-`vulnbox_services_path` (/root/services). All four are validated in `coerce_scalar`;
-the vulnbox validators are imported lazily so `app_config` stays feature-free.
+**Settings** (`app_config`, editable in `/config → game`):
+
+- `vm_ip` (existing): the ssh target. If it is unset or invalid, the routes answer
+  400 saying how to fix it.
+- `vulnbox_user` (root), `vulnbox_ssh_port` (22), `vulnbox_services_path` (/root/services).
+- `vulnbox_service_ports`: which published ports are game services, e.g.
+  `9000-9999,31337`; empty = every published port.
+
+All four new keys are validated in `coerce_scalar`; the vulnbox validators are
+imported lazily so `app_config` stays feature-free.
+
+**Presets**: `Preset(id, name, values)` entries in `presets.py`. Applying one
+(`POST /vulnbox/presets/<id>`, admin, audited) writes its values to `/config` and
+returns the matching `.env` lines (`presets.ASSEMBLER_ENV`), because the assembler
+reads `FLAG_REGEX`/`TICK_*`/`FLAG_LIFETIME` from `.env` at boot. That is the same
+caveat as the Config page. `tests/vulnbox/test_presets.py` runs every entry through
+`coerce_scalar`, so adding a game cannot ship a value `/config` would reject. Two
+value rules to remember when writing one:
+
+- `flag_lifetime` counts the round the flag was placed in (Corrie uses
+  `tick - (flagLifetime - 1)`). A flag valid for N rounds after its own round needs
+  N + 1.
+- `flag_regex` must be **unanchored**: w4rya searches for flags inside traffic, so a
+  game's official `^…$` pattern needs its anchors removed.
 
 **Data:** `./vulnbox-data` (git-ignored, mounted rw at `/app/vulnbox-data`, path from
 `W4RYA_VULNBOX_DIR`). It holds `keys/` (private key 0600, public key, pinned
@@ -238,13 +259,13 @@ Non-obvious decisions, each load-bearing:
    statically, a `.git` there hands our source to every team (`/.git/` scraping).
    Backups commit through `--git-dir`/`--work-tree` (the dotfiles-bare-repo pattern).
 2. **The private key is never JSON and never on screen.** `GET /vulnbox/key/private` is
-   a `no-store` attachment (admin, audited). The game is screen-recorded (handbook
-   §6.12). The UI renders only the public key.
+   a `no-store` attachment (admin, audited). A/D games may record or share players'
+   screens. The UI renders only the public key.
 3. **Host key pinned, not ignored.** ssh runs `StrictHostKeyChecking=accept-new` into
    our own `known_hosts`, plus `BatchMode`/`IdentitiesOnly`/`ConnectTimeout`. The
-   pasted script this replaces used `StrictHostKeyChecking=no` +
-   `/dev/null`, which accepts any MITM. When the box is legitimately re-provisioned,
-   use "forget host key".
+   ad-hoc script this replaced used `StrictHostKeyChecking=no` + `/dev/null`, which
+   accepts any MITM. When the box is legitimately re-provisioned, use "forget host
+   key".
 4. **No key, no socket.** Without a key, preflight reports the network checks as
    skipped and recon/backup fail fast, so no job reaches for the network. This also
    keeps the role-matrix test offline, since that test really invokes these routes.
@@ -255,15 +276,10 @@ Non-obvious decisions, each load-bearing:
 6. **Local git needs `-c safe.directory=*`.** It runs as root in the container over a
    host-owned bind mount; without it git refuses ("dubious ownership"). The flag is
    honored from the command line since git 2.38, and the image ships 2.39.
-7. **`flag_lifetime` counts the current tick** (Corrie uses `tick - (flagLifetime - 1)`).
-   ECSC flags are valid in their round + 4, so the value is **5**, not 4. The flag regex
-   is the official one **unanchored**: `^…$` would never match inside traffic.
-8. **The defaults button only reaches `app_config`.** The assembler reads
-   `FLAG_REGEX`/`TICK_*`/`FLAG_LIFETIME` from `.env` at boot. The button returns the
-   matching `.env` lines, and the UI shows them with a restart note (same caveat as
-   the Config page).
-9. **It never touches `authorized_keys`.** The organizer key stays, because removing it
-   limits the support the organizers can give.
+7. **IPv6 targets work.** ssh takes the bare literal; git's scp-style URL needs it
+   bracketed (`root@[2001:db8::2]:...`), which `backup.remote_url` does.
+8. **It never touches `authorized_keys`.** Keys the organizers installed stay, because
+   removing them limits the support they can give.
 
 Remote scripts (`services/api/vulnbox/remote/*.sh`) are allow-listed by name, piped
 into `bash -s` with `shlex.quote`d args, and emit tab-separated records. Nothing is
@@ -390,7 +406,7 @@ Prompts for password (getpass, no echo), or reads one line from stdin with `--st
 | PUT /users/<u>/role, /users/<u>/password | ✗ | ✗ | ✓ |
 | POST /vulnbox/preflight, /vulnbox/recon, /vulnbox/backup | ✗ | ✓ | ✓ |
 | POST /vulnbox/key, GET /vulnbox/key/private, DELETE /vulnbox/known-host | ✗ | ✗ | ✓ |
-| POST /vulnbox/import-services, /vulnbox/seed-defaults | ✗ | ✗ | ✓ |
+| POST /vulnbox/import-services, /vulnbox/presets/<id> | ✗ | ✗ | ✓ |
 
 `GET /setup/status` and `POST /setup` sit outside the matrix — both are public (no session required), and `/setup` 409s once any account exists.
 
@@ -410,7 +426,7 @@ Change `W4RYA_SECRET_KEY` in `.env` and `docker compose restart api`. All existi
 
 DB table `app_config (key text pk, value jsonb, updated_at)` — module `services/api/app_config.py`. Set from UI, read by routes via `app_config.get(key)` with a 5s cache; writes invalidate the cache for that key.
 
-Stored keys: `services` (list of {name, ip, port, notes}), `teams` (list of {name, ip, notes}), `flag_regex`, `tick_length`, `start_date`, `flag_lifetime`, `vm_ip`, `team_id`, `visualizer_url`, `bpf`, `noise_ips`.
+Stored keys: `services` (list of {name, ip, port, notes}), `teams` (list of {name, ip, notes}), `flag_regex`, `tick_length`, `start_date`, `flag_lifetime`, `vm_ip`, `team_id`, `visualizer_url`, `bpf`, `noise_ips`, and the vulnbox module's `vulnbox_user`, `vulnbox_ssh_port`, `vulnbox_services_path`, `vulnbox_service_ports`.
 
 **`noise_ips`** is the checker + our-own-tooling list that `show_attacker_flows.sh`
 used to carry in environment variables. It is a comma-separated **string**, not a
@@ -654,7 +670,7 @@ Backend remains the security boundary (403 with `{required_role, your_role}`); t
 | `test_routes_users.py` | `/users` CRUD |
 | `test_routes_config.py` | `/config` read/write paths, including flag-regex write-time validation |
 | `test_user_store.py` | locking, atomic write, last-admin guard, validation |
-| `vulnbox/` | the vulnbox module: config/validators, keys (incl. fingerprint vs real `ssh-keygen`), ssh argv + quoting, preflight/recon/backup (running the **real** remote scripts with bash and a real local git clone; only the ssh hop is faked), jobs (lock, interrupted), routes |
+| `vulnbox/` | the vulnbox module: config/validators, presets (every entry validated like `PUT /config`), keys (incl. fingerprint vs real `ssh-keygen`), ssh argv + quoting, preflight/recon/backup (running the **real** remote scripts with bash and a real local git clone; only the ssh hop is faked), jobs (lock, interrupted), routes (with a test-only preset and RFC 5737 documentation addresses) |
 
 The top-level `conftest.py` also points `W4RYA_VULNBOX_DIR` at a **per-test** tmp dir (autouse `_isolate_vulnbox_dir`). Without that, a key generated by one test would leak into the next one, and a key on disk is what lets a job reach for the network.
 
