@@ -140,8 +140,13 @@ def resolve_host(team_id: str, override: str) -> str:
             "/config, or set vulnbox_ip explicitly"
         )
     n = int(team_id)
-    if not (0 <= n <= 255):
-        raise ValueError(f"team_id {n} is out of range for 10.60.<id>.2")
+    # 0 is the "never configured" default (TEAM_ID unset); ECSC team ids start
+    # at 1 (the NOP team) and .255 would be the subnet broadcast.
+    if not (1 <= n <= 254):
+        raise ValueError(
+            f"team_id {n} is not a game team id — set your team id in /config "
+            "(or set vulnbox_ip explicitly)"
+        )
     return f"10.60.{n}.2"
 
 

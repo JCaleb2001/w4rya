@@ -30,6 +30,13 @@ def test_resolve_host_rejects_out_of_range_team_id():
         vconfig.resolve_host("300", "")
 
 
+def test_resolve_host_treats_unconfigured_team_zero_as_unset():
+    # "0" is the TEAM_ID default when nobody configured it
+    with pytest.raises(ValueError, match="team id"):
+        vconfig.resolve_host("0", "")
+    assert vconfig.resolve_host("0", "10.9.9.9") == "10.9.9.9"
+
+
 def test_resolve_host_rejects_bogus_override():
     with pytest.raises(ValueError):
         vconfig.resolve_host("3", "10.0.0.1; rm -rf /")

@@ -69,6 +69,7 @@ import rules
 import suricata_ctl
 import technique_map
 import user_store
+import vulnbox
 
 application = Flask(__name__)
 
@@ -95,6 +96,10 @@ application.config.update(
 
 CORS(application, supports_credentials=True)
 db = database.Pool(os.environ["TIMESCALE"])
+
+# Feature modules packaged as Blueprints. Auth still flows through the
+# app-wide before_request guard below, and roles through @auth.requires_role.
+application.register_blueprint(vulnbox.bp)
 
 
 @application.before_request
@@ -1929,6 +1934,12 @@ def create_app():
     audit.init_schema()
     exploits.set_pool(db)
     exploits.init_schema()
+    try:
+        vulnbox.init_paths()
+    except OSError as e:
+        # A missing/read-only ./vulnbox-data mount must not take the whole api
+        # down; the /vulnbox page reports the failure when it's used.
+        logging.getLogger("vulnbox").warning("vulnbox data dir unavailable: %s", e)
     return application
 
 if __name__ == "__main__":
