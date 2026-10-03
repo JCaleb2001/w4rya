@@ -6,6 +6,34 @@ change `.env`, the schema, or a script invocation.
 
 Releases before 0.7.0 predate this file — see `git log` and the release tags.
 
+## [Unreleased]
+
+### Added
+
+- **Vulnbox ops page (`/vulnbox`)**: prepares and defends our own vulnbox, in
+  ECSC 2026 game-day order, one button per action:
+  - **SSH key**: generate an ed25519 key and paste the public half into the A/D
+    platform. The private half is download-only (admin, audited) and never
+    shown on screen, since the game is screen-recorded.
+  - **Preflight**: a read-only checklist (key → VPN/host → ssh login → services
+    path / git / docker) that names the first broken link.
+  - **Recon**: services and their published ports. The 9000–9999 game ports
+    import into `/config → services` in one click.
+  - **Backup**: a git baseline and then snapshots of every service. They live in
+    bare repos outside the service directories on the box (no `.git` in a
+    served directory), mirrored to `./vulnbox-data/backups/`.
+  - An **"ECSC 2026 defaults"** button for tick, flag lifetime, flag regex and
+    start time.
+- New settings `vulnbox_ip` / `vulnbox_user` / `vulnbox_ssh_port` /
+  `vulnbox_services_path` in `/config`. The host defaults to `10.60.<team_id>.2`.
+- `scripts/backup.sh` now also saves the vulnbox ssh key.
+
+### Upgrading
+
+- Re-run `./install.sh` (or `mkdir -m 700 vulnbox-data`) before recreating the
+  stack, so `./vulnbox-data` is created owned by you. If Docker creates it, it
+  comes out root-owned.
+
 ## [0.8.0] — 2026-09-17
 
 Exploit isolation, incident packets, and the exploit-intel workflow — turning

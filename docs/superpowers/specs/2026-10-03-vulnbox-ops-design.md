@@ -2,7 +2,7 @@
 
 - **Date:** 2026-10-03
 - **Branch:** `claude/cool-johnson-t1lmoy`
-- **Status:** approved scope, pre-implementation
+- **Status:** implemented (as-built; see §10 for what changed during implementation)
 - **Author:** nightwing (paired with Claude)
 
 ## 1. Goal
@@ -45,7 +45,9 @@ DB schema change, no new container.
   covers Blueprint routes, so auth/roles work unchanged.
 - **Frontend:** a feature folder `frontend/src/features/vulnbox/`. Its endpoints
   are added to the single shared `w4ryaApi` slice via `injectEndpoints` (RTK
-  Query code-splitting), not a second API. One new tag type, `"Vulnbox"`.
+  Query code-splitting), not a second API. The feature declares its own
+  `"Vulnbox"` tag via `enhanceEndpoints({addTagTypes})`, so the base `api.ts` is
+  untouched.
 - **Dependency direction (one way):** `routes → jobs → {recon, backup, preflight} → ssh → keys → config`.
   `config.py` holds paths, timeouts and validators used by all of them.
 
@@ -73,7 +75,8 @@ the root-running container never leaves root-owned files on the host.
 
 Backups never create a `.git` inside a service directory (that would expose
 source via `/.git/` scraping). Instead a **bare** repo per service lives at
-`/root/.w4rya-backups/<service>.git`, committed with `--git-dir`/`--work-tree`.
+`~/.w4rya-backups/<service>.git` (`/root/...` for root), committed with
+`--git-dir`/`--work-tree`.
 Recon and preflight run a single piped shell script over SSH
 (`ssh … bash -s < remote/<name>.sh`), the same technique as
 `scripts/vulnbox/remote_capture.sh`. Scripts emit tab-separated text so the
@@ -90,12 +93,13 @@ vulnbox needs no Python.
 
 Added to `SCALAR_KEYS` with validators in `app_config.coerce_scalar`
 (IP/host, username charset, port range, absolute path). The derivation helper
-`vulnbox.config.resolve_host()` reads `vulnbox_ip` else computes from `team_id`.
+`vulnbox.config.resolve_host()` reads `vulnbox_ip` else computes from `team_id`;
+`team_id` 0 (the unconfigured default) is rejected rather than derived.
 
 ## 4. Behavior per card
 
 ### 4.1 Key (admin)
-- `GET /vulnbox/key` → `{exists, public_key, fingerprint, created_at}` (never the private key).
+- `GET /vulnbox` (any role) → overview `{target, key, jobs, defaults}`; `key` is `{exists, public_key, fingerprint, created_at}` — never the private key.
 - `POST /vulnbox/key` → generate ed25519 via `ssh-keygen`; refuses if one exists unless `{rotate:true}` (rotating invalidates the old one). Audited `vulnbox.key_generate` / `vulnbox.key_rotate`.
 - `GET /vulnbox/key/private` → `text/plain` attachment download. Audited `vulnbox.key_download`.
 - `DELETE /vulnbox/known-host` → forget the pinned host key (box re-provisioned). Audited.
@@ -114,11 +118,11 @@ Added to `SCALAR_KEYS` with validators in `app_config.coerce_scalar`
 - `GET /vulnbox/backup/last` → the last backup job result.
 
 ### 4.5 Defaults button (admin)
-- `POST /vulnbox/seed-defaults` → writes the ECSC 2026 values into `app_config` (tick 60000, flag_lifetime 4, flag_regex, start_date). Returns what changed. Audited `vulnbox.seed_defaults`. (Reuses `app_config.coerce_scalar` + `set`.)
+- `POST /vulnbox/seed-defaults` → writes the ECSC 2026 values into `app_config` (tick 60000, flag_lifetime **5** — w4rya counts the current tick, and a flag is valid in its round + 4 — the official flag regex *unanchored* so it matches inside traffic, start_date 2026-10-15T09:00:00Z). Returns the applied values plus the matching `.env` lines (the assembler reads those at boot). Audited `vulnbox.seed_defaults`. (Reuses `app_config.coerce_scalar` + `set`.)
 
 ## 5. Jobs (background, shared across 3 gunicorn workers)
 
-`jobs.py`: a job is a `{id, kind, state: running|done|error, started_at, finished_at, result, error}` record written to `job.json` atomically, guarded by a `job.lock` flock so only one runs at a time. A second request while one runs returns `409 {error, running: <kind>}`. The worker runs the job in a `threading.Thread`; the route returns the job id immediately and the frontend polls `GET /vulnbox/job`. If the holding worker dies, the lock releases and a stale `running` record older than a timeout reads as `error: interrupted` rather than wedging forever (mirrors the reasoning in `suricata_ctl.reload_rules`' coalescing/lock handling).
+`jobs.py`: a job is a `{id, kind, state: running|done|error, started_at, finished_at, result, error}` record written to `job.json` atomically, guarded by a `job.lock` flock so only one runs at a time. A second request while one runs returns `409 {error, running: <kind>}`. The worker runs the job in a `threading.Thread`; the route returns the job id immediately and the frontend polls `GET /vulnbox/job`. If the holding worker dies, the lock releases, and a `running` record whose lock nobody holds reads as `error: interrupted` — decided exactly by probing the lock, not by a timestamp timeout. The last result of each kind is kept, so one card's job doesn't wipe another's result.
 
 ## 6. Security decisions
 
@@ -156,3 +160,16 @@ pool are faked, exactly as `conftest.py` sets up.
 - Mount `./vulnbox-data` in BOTH compose files (kept in sync, per CLAUDE.md).
 - Backend = Blueprint package; frontend = feature folder + `injectEndpoints`.
 - Match existing style: `hax-*` classes, `font-mono`, `▎` headers, `useCanRole` gating + read-only banner.
+
+## 10. Changes made during implementation
+
+Each came out of verifying against the real code or tools, not a change of scope:
+
+- `GET /vulnbox/key` became the `GET /vulnbox` overview, a single poll for the whole page.
+- `flag_lifetime` is 5, not 4 (w4rya counts the current tick; see `Corrie.tsx`).
+- Job liveness is decided by the `flock`, not by a stale-age timeout. That's exact, and a slow job never gets a false "interrupted".
+- `team_id` 0 is rejected instead of deriving `10.60.0.2`.
+- The fingerprint is computed in-process (the overview is polled), pinned by a test to `ssh-keygen -lf`.
+- Local git uses `-c safe.directory=*` (verified: plain git refuses a host-owned bind mount when it runs as root).
+- The base `api.ts` is untouched (`enhanceEndpoints({addTagTypes})`).
+- `scripts/backup.sh` also saves `vulnbox-data/keys/`.
