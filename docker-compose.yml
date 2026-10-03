@@ -79,6 +79,10 @@ services:
       # suricata command socket directory (B1 auto-reload). Empty when running
       # the main compose alone; populated by suricata in the -suricata variant.
       - ./suricata-run:/var/run/suricata
+      # vulnbox ops (/vulnbox): our ssh key for the vulnbox, its pinned host
+      # key, the local mirror of the service backups, and the job state. rw —
+      # the api writes here. Git-ignored: it holds a private key.
+      - ./vulnbox-data:/app/vulnbox-data
     environment:
       TIMESCALE: ${TIMESCALE}
       W4RYA_TRAFFIC_DIR: ${TRAFFIC_DIR_DOCKER}

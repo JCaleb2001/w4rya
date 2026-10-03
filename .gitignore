@@ -151,6 +151,10 @@ suricata
 
 # scripts/backup.sh output — may contain users.yaml + .env contents
 /backups/
+
+# vulnbox ops module: our private ssh key for the vulnbox, its pinned host
+# key, and local mirrors of the services' source — never commit
+/vulnbox-data/
 # install.sh output
 /install.log
 /.env.bak.*
