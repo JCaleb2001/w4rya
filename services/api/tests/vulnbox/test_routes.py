@@ -181,3 +181,15 @@ def test_seed_defaults_applies_ecsc_values(admin, recorded_sets, audit_calls):
 def test_seed_defaults_without_database_is_503(admin):
     resp = admin.post("/vulnbox/seed-defaults")
     assert resp.status_code == 503
+
+
+def test_unusable_data_dir_is_a_clear_503(admin, team3, tmp_path, monkeypatch):
+    """A missing/read-only ./vulnbox-data mount must answer with a message,
+    not a 500 traceback. A path under a regular file can't be created."""
+    blocker = tmp_path / "not-a-dir"
+    blocker.write_text("")
+    monkeypatch.setenv("W4RYA_VULNBOX_DIR", str(blocker / "vulnbox-data"))
+    for method, path, body in (("POST", "/vulnbox/key", {}), ("POST", "/vulnbox/preflight", None)):
+        resp = admin.open(path, method=method, json=body)
+        assert resp.status_code == 503, (path, resp.status_code)
+        assert "data dir unavailable" in resp.get_json()["error"]

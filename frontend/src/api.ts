@@ -512,6 +512,11 @@ export interface GameConfig {
   bpf: string;
   rules_autoreload?: boolean;
   noise_ips?: string;
+  // vulnbox ops module (/vulnbox)
+  vulnbox_ip?: string;
+  vulnbox_user?: string;
+  vulnbox_ssh_port?: number;
+  vulnbox_services_path?: string;
 }
 
 export interface Team {

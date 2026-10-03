@@ -107,6 +107,8 @@ def generate_key():
         return jsonify({"error": str(e)}), 409
     except RuntimeError as e:
         return jsonify({"error": str(e)}), 500
+    except OSError as e:
+        return jsonify({"error": f"vulnbox data dir unavailable: {e}"}), 503
     audit.log(_actor(), "vulnbox.key_rotate" if existed else "vulnbox.key_generate",
               details={"fingerprint": status.get("fingerprint")})
     return jsonify(status), 201
@@ -150,6 +152,8 @@ def _start(kind: str, fn):
         record = jobs.start(kind, lambda: fn(target), actor=_actor())
     except jobs.JobBusy as e:
         return jsonify({"error": str(e), "running": e.kind}), 409
+    except OSError as e:
+        return jsonify({"error": f"vulnbox data dir unavailable: {e}"}), 503
     audit.log(_actor(), f"vulnbox.{kind}", target=target.host)
     return jsonify(record), 202
 

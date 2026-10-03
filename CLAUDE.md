@@ -213,7 +213,9 @@ Plus an **"ECSC 2026 defaults"** button: tick 60000 ms, `flag_lifetime` 5, flag 
   `services/api/vulnbox/README.md`.
 - Frontend: the feature folder `frontend/src/features/vulnbox/`. Endpoints go into the
   shared slice via `w4ryaApi.enhanceEndpoints({addTagTypes}).injectEndpoints(...)`, so
-  the base `api.ts` doesn't change. The folder exports only `VulnboxPage` (`index.ts`).
+  the base `api.ts` needs no new endpoints or tags (it only gained the four optional
+  `vulnbox_*` fields on `GameConfig`, which the Config page's Game form renders). The
+  folder exports only `VulnboxPage` (`index.ts`).
 - Existing modules stay flat; moving them is a separate cleanup, not drive-by.
 
 **Target:** `10.60.<team_id>.2`, derived from `/config`'s `team_id` unless the new
