@@ -314,6 +314,11 @@ export function Header() {
           Exploits
         </div>
       </Link>
+      <Link to="/vulnbox">
+        <div className="hax-btn" title="our vulnbox: ssh key, preflight, recon, git backup">
+          Vulnbox
+        </div>
+      </Link>
       {hasRole(useGetMeQuery().data?.role, "admin") && (
         <>
           <Link to="/audit">
